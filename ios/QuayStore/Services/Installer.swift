@@ -30,7 +30,7 @@ final class Installer: ObservableObject {
 
     // MARK: observer (called from Rust threads)
 
-    final class Observer: SigningObserver {
+    final class Observer: SigningObserver, @unchecked Sendable {
         weak var owner: Installer?
         init(owner: Installer) { self.owner = owner }
 

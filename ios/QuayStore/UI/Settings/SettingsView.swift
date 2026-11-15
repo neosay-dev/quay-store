@@ -369,7 +369,7 @@ struct PairingSection: View {
         } header: {
             Text("Pairing file")
         } footer: {
-            Text("Делается на компьютере в iLoader (или jitterbugpair): iPhone подключён кабелем, файл .plist или .mobiledevicepairing переносишь сюда через «Файлы», AirDrop или Telegram.")
+            Text("Делается на компьютере с iPhone на кабеле. До iOS 26.3 подходит обычный файл из iLoader или jitterbugpair. На iOS 26.4 и новее (и iOS 27) нужен RPPairing: idevice_pair, StikPair или свежий iLoader. Файл переносишь сюда через «Файлы», AirDrop или Telegram.")
         }
         .fileImporter(isPresented: $importing,
                       allowedContentTypes: [.propertyList, .xml, .data, UTType(filenameExtension: "mobiledevicepairing") ?? .data]) { result in
@@ -378,10 +378,13 @@ struct PairingSection: View {
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
             guard let data = try? Data(contentsOf: url) else { message = "Файл не читается"; return }
             do {
-                let udid = try validatePairingFile(pairingFile: data)
+                let summary = try inspectPairingFile(pairingFile: data)
                 Keychain.set(data, for: Keychain.Key.pairing)
                 settings.objectWillChange.send()
-                message = "Готово" + (udid.isEmpty ? "" : ": \(udid)")
+                switch summary.kind {
+                case .remotePairing: message = "Готово: RPPairing (iOS 26.4+)"
+                case .lockdown: message = "Готово: обычный pairing file" + (summary.udid.map { ", \($0)" } ?? "")
+                }
             } catch {
                 message = errorText(error)
             }
@@ -410,6 +413,7 @@ struct DeviceCheckSection: View {
             if let info {
                 InfoRow(title: "iPhone", value: info.name)
                 InfoRow(title: "iOS", value: info.productVersion)
+                InfoRow(title: "Подключение", value: info.connection == .remotePairing ? "RPPairing" : "Lockdown")
                 if let dm = info.developerMode {
                     InfoRow(title: "Режим разработчика", value: dm ? "Включён" : "Выключен")
                 }

@@ -28,7 +28,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 
 # Sideloading: Apple ID, anisette, certificates and profiles, signing, installd.
 isideload = { version = "=0.5.2", default-features = false, features = ["install", "tokio-mt"] }
-idevice = { version = "0.1.61", default-features = false, features = ["ring", "tcp", "heartbeat", "afc", "installation_proxy", "misagent"] }
+idevice = { version = "0.1.61", default-features = false, features = ["ring", "tcp", "heartbeat", "afc", "installation_proxy", "misagent", "remote_pairing", "tunnel_tcp_stack", "rsd", "xpc"] }
 apple-codesign-quick = "0.1.0"
 p12-keystore = { version = "0.3.0-rc4", package = "isideload-p12-keystore" }
 rsa = "0.9"

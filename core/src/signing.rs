@@ -23,7 +23,6 @@ use isideload::sideload::cert_identity::CertificateIdentity;
 use isideload::sideload::sideloader::Sideloader;
 use isideload::sideload::{SideloaderBuilder, TeamSelection};
 use isideload::util::callbacks::{ExtensionsBehaviorCallbackBox, MaxCertsCallbackBox};
-use isideload::util::device::IdeviceInfo;
 use isideload::util::storage::SideloadingStorage;
 use rootcause::prelude::*;
 use rsa::RsaPrivateKey;
@@ -31,7 +30,7 @@ use tokio::sync::{Mutex, oneshot};
 use x509_cert::Certificate;
 use x509_cert::der::Decode;
 
-use crate::device::{self, Heartbeat};
+use crate::device;
 use crate::error::{QuayError, Result};
 use crate::storage::FileStorage;
 
@@ -338,11 +337,8 @@ pub async fn install_with_apple_id(
     REGISTER_EXTENSIONS.store(register_extensions, Ordering::Relaxed);
 
     notify(InstallStage::Connecting, 0.0);
-    let p = device::provider(&pairing_file, &device_address)?;
-    let _hb = Heartbeat::start(&p).await.ok();
-    let dev = IdeviceInfo::from_device(&p)
-        .await
-        .map_err(|e| QuayError::device(format!("Нет связи с устройством: {}", report_text(&e))))?;
+    let mut link = device::connect(&pairing_file, &device_address).await?;
+    let dev = link.info().await?;
 
     let mut guard = session().lock().await;
     let s = guard
@@ -380,7 +376,7 @@ pub async fn install_with_apple_id(
     drop(guard);
 
     let outcome = describe_signed(&signed_dir);
-    install_signed(&p, &signed_dir).await?;
+    install_signed(&mut link, &signed_dir).await?;
     cleanup_extracted(&signed_dir);
     notify(InstallStage::Done, 1.0);
     outcome
@@ -520,11 +516,8 @@ pub async fn install_with_certificate(
 ) -> Result<InstallOutcome> {
     set_observer(Arc::from(observer));
     notify(InstallStage::Connecting, 0.0);
-    let p = device::provider(&pairing_file, &device_address)?;
-    let _hb = Heartbeat::start(&p).await.ok();
-    let dev = IdeviceInfo::from_device(&p)
-        .await
-        .map_err(|e| QuayError::device(format!("Нет связи с устройством: {}", report_text(&e))))?;
+    let mut link = device::connect(&pairing_file, &device_address).await?;
+    let dev = link.info().await?;
 
     let identity = load_identity(&p12, &password)?;
     let profile = parse_profile(&mobileprovision)?;
@@ -549,7 +542,7 @@ pub async fn install_with_certificate(
     };
 
     let outcome = describe_signed(&signed_dir);
-    install_signed(&p, &signed_dir).await?;
+    install_signed(&mut link, &signed_dir).await?;
     cleanup_extracted(&signed_dir);
     notify(InstallStage::Done, 1.0);
     outcome
@@ -639,9 +632,9 @@ fn strip_team_suffix(app_dir: &Path, team_id: &str) -> Result<()> {
     Ok(())
 }
 
-async fn install_signed(p: &idevice::provider::TcpProvider, signed_dir: &Path) -> Result<()> {
+async fn install_signed(link: &mut device::Link, signed_dir: &Path) -> Result<()> {
     notify(InstallStage::Uploading, 0.0);
-    isideload::sideload::install::install_app(p, signed_dir, |pct: u64| {
+    link.install(signed_dir, |pct: u64| {
         let f = pct as f32 / 100.0;
         if pct < 70 {
             notify(InstallStage::Uploading, f / 0.7);

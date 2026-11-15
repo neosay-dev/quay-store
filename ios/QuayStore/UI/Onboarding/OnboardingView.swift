@@ -92,7 +92,7 @@ struct OnboardingView: View {
                 if compareVersions(a: version, b: "16.0") < 0 {
                     Text("Нужна iOS 16 или новее.").foregroundStyle(.red)
                 } else if needsRemotePairing {
-                    Text("На iOS 26.4 и новее Apple поменяла сопряжение: обычный pairing file может не подойти. Сделай файл в последней версии iLoader и проверь связь на шаге «Pairing file». Если не подключится, напиши в Issues на GitHub: поддержка нового сопряжения в работе.")
+                    Text("На iOS 26.4 и новее обычный pairing file не работает: нужен RPPairing. Его делает idevice_pair (StikPair) или свежий iLoader на компьютере, с iPhone на кабеле.")
                         .foregroundStyle(.orange)
                 } else {
                     Text("Эта версия iOS поддерживается.").foregroundStyle(.green)
