@@ -1,0 +1,143 @@
+# Quay Store: the Rust core (tests on Linux), then the iOS app (Rust static library + Swift, unsigned IPA).
+# Every push to main builds an IPA; a tag v<version> (or Run workflow with a version) makes a release
+# with the IPA and Quay's own source (source.json).
+name: iOS
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Release this build as version (e.g. 0.1.0): tag v<version>"
+        required: false
+        default: ""
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  core:
+    name: Core tests (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: linux
+      - name: cargo test
+        run: cargo test -p quay-core 2>&1 | tee core-tests.log
+        shell: bash
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: core-tests-log-${{ github.run_number }}
+          path: core-tests.log
+          if-no-files-found: ignore
+
+  ipa:
+    name: IPA
+    needs: core
+    runs-on: macos-26
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    env:
+      IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust for iOS
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-apple-ios
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ios
+          cache-on-failure: true
+
+      - name: Core library (iPhone)
+        run: cargo build --release -p quay-core --target aarch64-apple-ios 2>&1 | tee rust-ios-build.log
+
+      - name: Swift bindings
+        run: |
+          cargo build --release -p quay-core 2>&1 | tee rust-host-build.log
+          mkdir -p ios/Generated
+          cargo run --release -p uniffi-bindgen -- generate \
+            --library target/release/libquay_core.dylib --language swift --out-dir ios/Generated
+          ls -l ios/Generated
+
+      - name: Xcode project
+        if: hashFiles('ios/project.yml') != ''
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen generate
+
+      - name: App (unsigned)
+        if: hashFiles('ios/project.yml') != ''
+        run: |
+          cd ios
+          xcodebuild -project QuayStore.xcodeproj -scheme QuayStore -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee ../xcode-ios-build.log | grep -E "error:|warning: unre|BUILD (SUCCEEDED|FAILED)" | head -n 200
+          test "${PIPESTATUS[0]}" = 0
+
+      - name: Build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuayStore-build-logs-${{ github.run_number }}
+          path: |
+            rust-ios-build.log
+            rust-host-build.log
+            xcode-ios-build.log
+            ios/Generated
+          if-no-files-found: ignore
+
+      - name: IPA
+        if: hashFiles('ios/project.yml') != ''
+        run: |
+          cd ios
+          rm -rf Payload && mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/QuayStore.app Payload/
+          zip -qry ../QuayStore.ipa Payload
+          ls -lh ../QuayStore.ipa
+
+      - uses: actions/upload-artifact@v4
+        if: hashFiles('ios/project.yml') != ''
+        with:
+          name: QuayStore-${{ github.run_number }}
+          path: QuayStore.ipa
+
+      - name: Release
+        if: hashFiles('ios/project.yml') != '' && (startsWith(github.ref, 'refs/tags/v') || inputs.release != '')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE: ${{ inputs.release }}
+        run: |
+          if [ -n "$RELEASE" ]; then tag="v${RELEASE#v}"; else tag="${GITHUB_REF_NAME}"; fi
+          gh release view "$tag" >/dev/null 2>&1 \
+            || gh release create "$tag" --target "$GITHUB_SHA" --title "Quay Store ${tag#v}" \
+              --notes-file RELEASE_NOTES.md --latest
+          cp QuayStore.ipa "QuayStore-${tag#v}.ipa"
+          gh release upload "$tag" "QuayStore-${tag#v}.ipa" --clobber
+          python3 tools/make_source.py "$GITHUB_REPOSITORY" > source.json
+          gh release upload "$tag" source.json --clobber

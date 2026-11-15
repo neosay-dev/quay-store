@@ -1,0 +1,7 @@
+/target
+ios/Generated/
+ios/build/
+ios/*.xcodeproj
+ios/Payload
+*.ipa
+.DS_Store

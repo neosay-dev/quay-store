@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["core", "uniffi-bindgen"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+# The iPhone library: small and fast, panics unwind into UniFFI errors instead of aborting the app.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 16
+strip = "debuginfo"

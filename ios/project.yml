@@ -1,0 +1,106 @@
+# XcodeGen spec: CI runs `xcodegen` here after building the Rust core and generating its Swift bindings
+# (ios/Generated: quay_core.swift + quay_coreFFI.h).
+name: QuayStore
+options:
+  developmentLanguage: ru
+  bundleIdPrefix: dev.neosay
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    RUST_LIB_DIR: $(SRCROOT)/../target/aarch64-apple-ios/release
+targets:
+  QuayStore:
+    type: application
+    platform: iOS
+    sources:
+      - path: QuayStore
+      - path: Generated
+        includes:
+          - "*.swift"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.neosay.quaystore
+        PRODUCT_NAME: QuayStore
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_OBJC_BRIDGING_HEADER: QuayStore/Bridge/QuayStore-Bridging-Header.h
+        HEADER_SEARCH_PATHS: $(SRCROOT)/Generated
+        LIBRARY_SEARCH_PATHS: $(RUST_LIB_DIR)
+        OTHER_LDFLAGS: -lquay_core -lc++ -lresolv
+        ENABLE_BITCODE: NO
+        DEAD_CODE_STRIPPING: YES
+        SUPPORTS_MACCATALYST: NO
+        GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+    info:
+      path: QuayStore/Info.plist
+      properties:
+        CFBundleDisplayName: Quay Store
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        ITSAppUsesNonExemptEncryption: false
+        LSApplicationCategoryType: public.app-category.utilities
+        # The device talks to itself through LocalDevVPN (10.7.0.1).
+        NSLocalNetworkUsageDescription: Quay Store устанавливает приложения на этот iPhone через LocalDevVPN.
+        # Background: update checks and signature refresh.
+        UIBackgroundModes:
+          - fetch
+          - processing
+        BGTaskSchedulerPermittedIdentifiers:
+          - dev.neosay.quaystore.refresh
+        # quay://source?url=… adds a source; altstore:// and sidestore:// links too.
+        CFBundleURLTypes:
+          - CFBundleURLName: dev.neosay.quaystore
+            CFBundleURLSchemes:
+              - quay
+              - altstore
+              - sidestore
+        # "Open in Quay Store" for .ipa files from Files, Safari and Telegram.
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: iOS App
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - com.apple.itunes.ipa
+              - dev.neosay.quaystore.ipa
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: dev.neosay.quaystore.ipa
+            UTTypeDescription: iOS App
+            UTTypeConformsTo:
+              - public.data
+              - public.zip-archive
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - ipa
+          - UTTypeIdentifier: dev.neosay.quaystore.pairing
+            UTTypeDescription: Pairing File
+            UTTypeConformsTo:
+              - public.data
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - mobiledevicepairing
+          - UTTypeIdentifier: dev.neosay.quaystore.mobileprovision
+            UTTypeDescription: Provisioning Profile
+            UTTypeConformsTo:
+              - public.data
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - mobileprovision
+        LSSupportsOpeningDocumentsInPlace: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+    dependencies:
+      - sdk: Security.framework
+      - sdk: SystemConfiguration.framework
+      - sdk: CoreFoundation.framework
+      - sdk: UserNotifications.framework
+      - sdk: BackgroundTasks.framework

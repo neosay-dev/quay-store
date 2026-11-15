@@ -1,0 +1,39 @@
+[package]
+name = "quay-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "quay_core"
+# staticlib: linked into the iOS app. cdylib: what uniffi-bindgen reads the Swift API from. lib: tests.
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[dependencies]
+uniffi = { version = "0.32", features = ["tokio"] }
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+plist = "1.8"
+sha2 = "0.10"
+hex = "0.4"
+zip = { version = "8", default-features = false, features = ["deflate"] }
+tokio = { version = "1.49", features = ["rt-multi-thread", "sync", "time", "macros", "fs"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "gzip", "rustls-no-provider", "http2", "charset", "system-proxy"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "tls12", "std"] }
+url = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
+
+# Sideloading: Apple ID, anisette, certificates and profiles, signing, installd.
+isideload = { version = "=0.5.2", default-features = false, features = ["install", "tokio-mt"] }
+idevice = { version = "0.1.61", default-features = false, features = ["ring", "tcp", "heartbeat", "afc", "installation_proxy", "misagent"] }
+apple-codesign-quick = "0.1.0"
+p12-keystore = { version = "0.3.0-rc4", package = "isideload-p12-keystore" }
+rsa = "0.9"
+x509-cert = "0.2.5"
+rootcause = "0.12"
+
+[dev-dependencies]
+tokio = { version = "1.49", features = ["rt-multi-thread", "macros"] }
