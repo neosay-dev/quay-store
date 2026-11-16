@@ -12,6 +12,7 @@ pub mod error;
 pub mod github;
 pub mod http;
 pub mod ipa;
+pub mod ota;
 pub mod signing;
 pub mod source;
 pub mod storage;

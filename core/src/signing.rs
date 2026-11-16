@@ -503,49 +503,60 @@ pub fn bundle_id_for_profile(app_id_entitlement: &str, team_id: &str, original: 
     }
 }
 
-/// Your own certificate: sign with it and install.
+/// Your own certificate: sign into a new .ipa at `out_ipa_path`, for iOS to install itself (itms-services).
+/// No pairing file or VPN: the device is not contacted. iOS refuses the install if this iPhone is not in the profile.
 #[uniffi::export(async_runtime = "tokio")]
-pub async fn install_with_certificate(
+pub async fn sign_ipa_with_certificate(
     ipa_path: String,
     p12: Vec<u8>,
     password: String,
     mobileprovision: Vec<u8>,
-    pairing_file: Vec<u8>,
-    device_address: String,
-    observer: Box<dyn SigningObserver>,
+    out_ipa_path: String,
 ) -> Result<InstallOutcome> {
-    set_observer(Arc::from(observer));
-    notify(InstallStage::Connecting, 0.0);
-    let mut link = device::connect(&pairing_file, &device_address).await?;
-    let dev = link.info().await?;
-
     let identity = load_identity(&p12, &password)?;
-    let profile = parse_profile(&mobileprovision)?;
-    let pl = profile.plist();
-    let all_devices = pl.get("ProvisionsAllDevices").and_then(|v| v.as_boolean()).unwrap_or(false);
-    let listed = pl
-        .get("ProvisionedDevices")
-        .and_then(|v| v.as_array())
-        .map(|a| a.iter().any(|v| v.as_string() == Some(dev.udid.as_str())))
-        .unwrap_or(false);
-    if !all_devices && !listed {
-        return Err(QuayError::signing("Этого iPhone нет в профиле (.mobileprovision). Добавь его UDID и скачай профиль заново"));
+    tokio::task::spawn_blocking(move || {
+        let signed_dir = sign_with_identity(&ipa_path, &identity, &mobileprovision)?;
+        let outcome = describe_signed(&signed_dir);
+        let zipped = zip_app(&signed_dir, Path::new(&out_ipa_path));
+        cleanup_extracted(&signed_dir);
+        zipped?;
+        outcome
+    })
+    .await
+    .map_err(|e| QuayError::signing(format!("Подпись прервалась: {e}")))?
+}
+
+/// Payload/<Name>.app/… into an .ipa, keeping file modes (the executable bit) and symlinks.
+fn zip_app(app_dir: &Path, out: &Path) -> Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    let name = app_dir.file_name().ok_or_else(|| QuayError::signing("Нет папки приложения"))?.to_string_lossy().to_string();
+    let mut zip = zip::ZipWriter::new(std::fs::File::create(out)?);
+    let mut stack = vec![(app_dir.to_path_buf(), format!("Payload/{name}"))];
+    let fail = |e: zip::result::ZipError| QuayError::signing(format!("Не удалось упаковать .ipa: {e}"));
+    while let Some((dir, prefix)) = stack.pop() {
+        zip.add_directory(format!("{prefix}/"), zip::write::SimpleFileOptions::default()).map_err(fail)?;
+        for entry in std::fs::read_dir(&dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            let zpath = format!("{prefix}/{}", entry.file_name().to_string_lossy());
+            let meta = std::fs::symlink_metadata(&path)?;
+            if meta.file_type().is_symlink() {
+                let target = std::fs::read_link(&path)?;
+                zip.add_symlink(zpath, target.to_string_lossy(), zip::write::SimpleFileOptions::default()).map_err(fail)?;
+            } else if meta.is_dir() {
+                stack.push((path, zpath));
+            } else {
+                let opts = zip::write::SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Deflated)
+                    .unix_permissions(meta.permissions().mode() & 0o777);
+                zip.start_file(zpath, opts).map_err(fail)?;
+                zip.write_all(&std::fs::read(&path)?)?;
+            }
+        }
     }
-
-    notify(InstallStage::Signing, 0.1);
-    let signed_dir = {
-        let ipa_path = ipa_path.clone();
-        let mobileprovision = mobileprovision.clone();
-        tokio::task::spawn_blocking(move || sign_with_identity(&ipa_path, &identity, &mobileprovision))
-            .await
-            .map_err(|e| QuayError::signing(format!("Подпись прервалась: {e}")))??
-    };
-
-    let outcome = describe_signed(&signed_dir);
-    install_signed(&mut link, &signed_dir).await?;
-    cleanup_extracted(&signed_dir);
-    notify(InstallStage::Done, 1.0);
-    outcome
+    zip.finish().map_err(fail)?;
+    Ok(())
 }
 
 fn sign_with_identity(ipa_path: &str, identity: &CertificateIdentity, mobileprovision: &[u8]) -> Result<PathBuf> {
@@ -689,6 +700,23 @@ fn cleanup_extracted(app_dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zips_an_app_with_modes() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("quay-zip-{}", std::process::id()));
+        let app = root.join("A.app");
+        std::fs::create_dir_all(app.join("Frameworks")).unwrap();
+        std::fs::write(app.join("A"), b"bin").unwrap();
+        std::fs::set_permissions(app.join("A"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(app.join("Frameworks/x.txt"), b"x").unwrap();
+        let out = root.join("out.ipa");
+        zip_app(&app, &out).unwrap();
+        let mut z = zip::ZipArchive::new(std::fs::File::open(&out).unwrap()).unwrap();
+        assert_eq!(z.by_name("Payload/A.app/A").unwrap().unix_mode().unwrap() & 0o777, 0o755);
+        assert!(z.by_name("Payload/A.app/Frameworks/x.txt").is_ok());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn profile_bundle_ids() {

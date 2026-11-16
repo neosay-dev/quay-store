@@ -12,7 +12,27 @@ struct OnboardingView: View {
     @State var sourceError: String?
     @State var addingSource = false
 
-    let steps = ["Привет", "iPhone", "Режим разработчика", "LocalDevVPN", "Pairing file", "Подпись", "Источник", "Готово"]
+    enum Step { case question, device, developerMode, vpn, pairing, signing, source, done }
+
+    /// With your own certificate iOS installs apps itself: no LocalDevVPN, no pairing file.
+    var steps: [Step] {
+        settings.signingMode == .certificate
+            ? [.question, .device, .developerMode, .signing, .source, .done]
+            : [.question, .device, .developerMode, .vpn, .pairing, .signing, .source, .done]
+    }
+
+    func title(_ s: Step) -> String {
+        switch s {
+        case .question: return "Привет"
+        case .device: return "iPhone"
+        case .developerMode: return "Режим разработчика"
+        case .vpn: return "LocalDevVPN"
+        case .pairing: return "Pairing file"
+        case .signing: return settings.signingMode == .certificate ? "Сертификат" : "Apple ID"
+        case .source: return "Источник"
+        case .done: return "Готово"
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -26,13 +46,15 @@ struct OnboardingView: View {
                 }
                 content
             }
-            .navigationTitle(steps[step])
+            .navigationTitle(title(steps[step]))
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     if step > 0 { Button("Назад") { step -= 1 } }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    if step < steps.count - 1 {
+                    if step == 0 {
+                        EmptyView()
+                    } else if step < steps.count - 1 {
                         Button(nextTitle) { step += 1 }
                     } else {
                         Button("Начать") { finish() }.fontWeight(.semibold)
@@ -44,38 +66,54 @@ struct OnboardingView: View {
     }
 
     private var nextTitle: String {
-        switch step {
-        case 4: return settings.hasPairingFile ? "Далее" : "Пропустить"
-        case 5: return (installer.account != nil || settings.hasCertificate) ? "Далее" : "Пропустить"
-        case 6: return catalog.records.isEmpty ? "Пропустить" : "Далее"
+        switch steps[step] {
+        case .pairing: return settings.hasPairingFile ? "Далее" : "Пропустить"
+        case .signing: return (installer.account != nil || settings.hasCertificate) ? "Далее" : "Пропустить"
+        case .source: return catalog.records.isEmpty ? "Пропустить" : "Далее"
         default: return "Далее"
         }
     }
 
     @ViewBuilder private var content: some View {
-        switch step {
-        case 0: welcome
-        case 1: device
-        case 2: developerMode
-        case 3: vpn
-        case 4: pairing
-        case 5: signing
-        case 6: source
-        default: done
+        switch steps[step] {
+        case .question: question
+        case .device: device
+        case .developerMode: developerMode
+        case .vpn: vpn
+        case .pairing: pairing
+        case .signing: signing
+        case .source: source
+        case .done: done
         }
     }
 
-    private var welcome: some View {
+    @ViewBuilder private var question: some View {
         Section {
-            Text("Quay Store ставит приложения на этот iPhone сам, без компьютера: скачивает .ipa из твоих источников, подписывает и устанавливает.")
-            VStack(alignment: .leading, spacing: 8) {
-                Label("LocalDevVPN из App Store", systemImage: "network")
-                Label("Pairing file (один раз, с компьютера)", systemImage: "cable.connector")
-                Label("Apple ID или свой сертификат", systemImage: "signature")
+            Text("Quay Store скачивает .ipa из твоих источников, подписывает и ставит на этот iPhone без компьютера.")
+        }
+        Section {
+            Button {
+                settings.signingMode = .certificate
+                step = 1
+            } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Да, есть свой сертификат").font(.headline)
+                    Text(".p12 и .mobileprovision. Ничего больше не нужно: iOS ставит приложения сама.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
             }
-            .font(.subheadline)
+            Button {
+                settings.signingMode = .appleID
+                step = 1
+            } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Нет, подпишу через Apple ID").font(.headline)
+                    Text("Бесплатно, подпись на 7 дней. Нужны LocalDevVPN и pairing file из iLoader.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
         } header: {
-            Text("Что понадобится")
+            Text("У тебя есть свой сертификат?")
         }
     }
 
@@ -133,15 +171,12 @@ struct OnboardingView: View {
     }
 
     @ViewBuilder private var signing: some View {
+        // The mode was chosen on the first step; changing it here would reshuffle the steps.
         Section {
-            Picker("Способ подписи", selection: $settings.signingMode) {
-                ForEach(SigningMode.allCases) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented)
-        } footer: {
             Text(settings.signingMode == .appleID
                  ? "Бесплатный Apple ID: подпись на 7 дней, до 3 приложений вместе с Quay. Quay продлевает подписи сам."
                  : "Свой сертификат (.p12 + .mobileprovision): подпись живёт, пока жив сертификат.")
+                .font(.footnote).foregroundStyle(.secondary)
         }
         if settings.signingMode == .appleID {
             if let a = installer.account {

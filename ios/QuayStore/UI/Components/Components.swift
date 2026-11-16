@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// An app icon with the iOS corner shape; grey while it loads or when there is none.
 struct AppIcon: View {
@@ -134,5 +135,37 @@ struct InfoRow: View {
             Text(value).multilineTextAlignment(.trailing).textSelection(.enabled)
         }
         .font(.subheadline)
+    }
+}
+
+/// The Files picker straight from UIKit: SwiftUI's .fileImporter does not open in some places
+/// (inside a sheet or a pushed screen). Files come as copies, so no security-scoped access is needed.
+@MainActor
+enum FilePicker {
+    private final class Delegate: NSObject, UIDocumentPickerDelegate {
+        let done: ([URL]) -> Void
+        init(done: @escaping ([URL]) -> Void) { self.done = done }
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { done(urls) }
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { done([]) }
+    }
+
+    private static var delegate: Delegate?
+
+    static func pick(_ types: [UTType], multiple: Bool = false) async -> [URL] {
+        guard var top = UIApplication.shared.connectedScenes
+            .compactMap({ ($0 as? UIWindowScene)?.windows.first(where: \.isKeyWindow)?.rootViewController }).first
+        else { return [] }
+        while let next = top.presentedViewController { top = next }
+        return await withCheckedContinuation { cont in
+            let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: true)
+            picker.allowsMultipleSelection = multiple
+            let d = Delegate { urls in
+                cont.resume(returning: urls)
+                FilePicker.delegate = nil
+            }
+            delegate = d
+            picker.delegate = d
+            top.present(picker, animated: true)
+        }
     }
 }

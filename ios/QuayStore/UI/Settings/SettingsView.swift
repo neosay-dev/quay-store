@@ -250,22 +250,19 @@ struct CertificateView: View {
     @State var password = ""
     @State var summary: CertificateSummary?
     @State var error: String?
-    @State var picking: Picking?
-
-    enum Picking: Identifiable { case p12, provision; var id: Self { self } }
 
     var body: some View {
         Form {
             Section {
-                Button { picking = .p12 } label: {
+                Button { Task { await pickFiles() } } label: {
                     InfoRow(title: "Сертификат .p12", value: p12 == nil ? "Выбрать" : "Выбран")
                 }
                 SecureField("Пароль от .p12", text: $password)
-                Button { picking = .provision } label: {
+                Button { Task { await pickFiles() } } label: {
                     InfoRow(title: "Профиль .mobileprovision", value: provision == nil ? "Выбрать" : "Выбран")
                 }
             } footer: {
-                Text("Сертификат разработчика или дистрибуции со своим профилем. iPhone должен быть в профиле, если профиль не корпоративный.")
+                Text("Можно выбрать оба файла сразу. Сертификат разработчика или дистрибуции со своим профилем: iPhone должен быть в профиле, если профиль не корпоративный. Pairing file и VPN не нужны: iOS ставит приложения сама.")
             }
             if let s = summary {
                 Section("Проверка") {
@@ -302,17 +299,15 @@ struct CertificateView: View {
             inspect()
         }
         .onChange(of: password) { _ in inspect() }
-        .fileImporter(isPresented: Binding(get: { picking != nil }, set: { if !$0 { picking = nil } }),
-                      allowedContentTypes: picking == .p12
-                        ? [UTType(filenameExtension: "p12") ?? .data, .data]
-                        : [UTType(filenameExtension: "mobileprovision") ?? .data, .data]) { result in
-            guard case .success(let url) = result else { return }
-            let scoped = url.startAccessingSecurityScopedResource()
-            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+    }
+
+    /// .p12 and .mobileprovision, one or both at once; told apart by extension.
+    private func pickFiles() async {
+        for url in await FilePicker.pick([.data], multiple: true) {
             let data = try? Data(contentsOf: url)
             if url.pathExtension.lowercased() == "mobileprovision" { provision = data } else { p12 = data }
-            inspect()
         }
+        inspect()
     }
 
     private func inspect() {
@@ -359,24 +354,22 @@ struct DeviceView: View {
 
 struct PairingSection: View {
     @EnvironmentObject var settings: SettingsModel
-    @State var importing = false
     @State var message: String?
 
     var body: some View {
         Section {
-            Button(settings.hasPairingFile ? "Заменить pairing file" : "Выбрать pairing file") { importing = true }
+            Button(settings.hasPairingFile ? "Заменить pairing file" : "Выбрать pairing file") { Task { await importPairing() } }
             if let message { Text(message).font(.footnote).foregroundStyle(message.hasPrefix("Готово") ? Color.green : Color.red) }
         } header: {
             Text("Pairing file")
         } footer: {
-            Text("Нужен для установки при любом способе подписи. В iLoader на компьютере (iPhone на кабеле): список экспорта → pairing file. На iOS 26.4 и новее (и iOS 27) нужен RPPairing. Файл переносишь сюда через «Файлы», AirDrop или Telegram.")
+            Text("Нужен для подписи через Apple ID (со своим сертификатом не нужен). В iLoader на компьютере (iPhone на кабеле): список экспорта → pairing file. На iOS 26.4 и новее (и iOS 27) нужен RPPairing. Файл переносишь сюда через «Файлы», AirDrop или Telegram.")
         }
-        .fileImporter(isPresented: $importing,
-                      allowedContentTypes: [.propertyList, .xml, .data, UTType(filenameExtension: "mobiledevicepairing") ?? .data]) { result in
-            guard case .success(let url) = result else { return }
-            let scoped = url.startAccessingSecurityScopedResource()
-            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            guard let data = try? Data(contentsOf: url) else { message = "Файл не читается"; return }
+    }
+
+    private func importPairing() async {
+        guard let url = await FilePicker.pick([.data]).first else { return }
+        guard let data = try? Data(contentsOf: url) else { message = "Файл не читается"; return }
             do {
                 let summary = try inspectPairingFile(pairingFile: data)
                 Keychain.set(data, for: Keychain.Key.pairing)
@@ -388,7 +381,6 @@ struct PairingSection: View {
             } catch {
                 message = errorText(error)
             }
-        }
     }
 }
 

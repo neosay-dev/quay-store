@@ -19,7 +19,7 @@ plist = "1.8"
 sha2 = "0.10"
 hex = "0.4"
 zip = { version = "8", default-features = false, features = ["deflate"] }
-tokio = { version = "1.49", features = ["rt-multi-thread", "sync", "time", "macros", "fs"] }
+tokio = { version = "1.49", features = ["rt-multi-thread", "sync", "time", "macros", "fs", "net", "io-util"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "gzip", "rustls-no-provider", "http2", "charset", "system-proxy"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "tls12", "std"] }
 url = "2"

@@ -5,7 +5,6 @@ struct MyAppsView: View {
     @EnvironmentObject var catalog: Catalog
     @EnvironmentObject var installer: Installer
     @EnvironmentObject var settings: SettingsModel
-    @State var importing = false
 
     var body: some View {
         List {
@@ -64,7 +63,11 @@ struct MyAppsView: View {
                 }
                 .disabled(installer.job != nil)
                 Button {
-                    importing = true
+                    Task {
+                        if let url = await FilePicker.pick([UTType(filenameExtension: "ipa") ?? .data, .data]).first {
+                            await installer.installLocal(url)
+                        }
+                    }
                 } label: {
                     Label("Установить .ipa из Файлов", systemImage: "doc.badge.plus")
                 }
@@ -76,11 +79,6 @@ struct MyAppsView: View {
         .refreshable {
             await catalog.refreshAll()
             await installer.syncWithDevice()
-        }
-        .fileImporter(isPresented: $importing, allowedContentTypes: [UTType(filenameExtension: "ipa") ?? .data, .zip]) { result in
-            if case .success(let url) = result {
-                Task { await installer.installLocal(url) }
-            }
         }
     }
 }

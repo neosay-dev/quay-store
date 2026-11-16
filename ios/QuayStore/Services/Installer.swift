@@ -273,7 +273,9 @@ final class Installer: ObservableObject {
 
     func uninstall(_ record: InstalledRecord) async {
         await run(title: record.name, icon: record.iconURL) {
-            guard let pairing = self.settings.pairingFile else { throw QuayMessage("Нет pairing file") }
+            guard let pairing = self.settings.pairingFile else {
+                throw QuayMessage("Без pairing file Quay не может удалять приложения: удали его с домашнего экрана и выбери «Забыть» в меню приложения")
+            }
             self.job?.stage = "Удаление"
             try await uninstallApp(pairingFile: pairing, address: self.settings.deviceAddress, bundleId: record.installedBundleId)
             self.catalog.removeInstalled(record.installedBundleId)
@@ -295,11 +297,11 @@ final class Installer: ObservableObject {
     // MARK: pieces
 
     private func sign(ipaPath: String, increasedMemory: Bool, replacing: String?) async throws -> InstallOutcome {
-        guard let pairing = settings.pairingFile else {
-            throw QuayMessage("Сначала добавь pairing file: Настройки → Устройство")
-        }
         switch settings.signingMode {
         case .appleID:
+            guard let pairing = settings.pairingFile else {
+                throw QuayMessage("Сначала добавь pairing file: Настройки → Устройство")
+            }
             try await ensureSession()
             if account?.isFree ?? true {
                 let others = catalog.activeFreeApps.filter { $0.installedBundleId != replacing }
@@ -317,11 +319,39 @@ final class Installer: ObservableObject {
                   let provision = Keychain.data(for: Keychain.Key.provision) else {
                 throw QuayMessage("Добавь сертификат: Настройки → Подпись")
             }
-            return try await installWithCertificate(
+            job?.stage = "Подпись"
+            let signed = FileManager.default.temporaryDirectory.appendingPathComponent("signed-\(UUID().uuidString).ipa")
+            let outcome = try await signIpaWithCertificate(
                 ipaPath: ipaPath, p12: p12, password: Keychain.string(for: Keychain.Key.p12Password) ?? "",
-                mobileprovision: provision, pairingFile: pairing, deviceAddress: settings.deviceAddress,
-                observer: observer)
+                mobileprovision: provision, outIpaPath: signed.path)
+            try await installOverTheAir(signed, outcome: outcome)
+            return outcome
         }
+    }
+
+    /// iOS installs the signed .ipa itself: Quay serves it on 127.0.0.1, the manifest comes from api.palera.in
+    /// (an https manifest is required; Feather's "semi-local" mode does the same). Sent there: bundle id, name, version.
+    private func installOverTheAir(_ ipa: URL, outcome: InstallOutcome) async throws {
+        let port = try await serveIpa(path: ipa.path)
+        var manifest = URLComponents(string: "https://api.palera.in/genPlist")!
+        manifest.queryItems = [
+            URLQueryItem(name: "bundleid", value: outcome.installedBundleId),
+            URLQueryItem(name: "name", value: outcome.appName),
+            URLQueryItem(name: "version", value: outcome.version),
+            URLQueryItem(name: "fetchurl", value: "http://127.0.0.1:\(port)/app.ipa"),
+        ]
+        guard let manifestURL = manifest.url?.absoluteString
+                .addingPercentEncoding(withAllowedCharacters: .alphanumerics),
+              let link = URL(string: "itms-services://?action=download-manifest&url=\(manifestURL)") else {
+            throw QuayMessage("Не удалось собрать ссылку установки")
+        }
+        job?.stage = "Подтверди установку на экране"
+        job?.fraction = 1
+        guard await UIApplication.shared.open(link) else {
+            throw QuayMessage("iOS не открыла установку")
+        }
+        // shortcut: no way to learn when iOS finished; give it time to fetch the file while Quay is still awake.
+        try? await Task.sleep(nanoseconds: 8_000_000_000)
     }
 
     private func fetchIPA(_ link: String, sha256: String?) async throws -> URL {
