@@ -207,38 +207,26 @@ pub fn version_from_tag(tag: &str) -> String {
     }
 }
 
-/// The asset name without its version and noise: "Horizon-0.2.1.ipa" → "Horizon".
-/// Assets with the same stem across releases are the same app.
-pub fn asset_stem(name: &str, version: &str) -> String {
-    let base = name.rsplit_once('.').map(|(b, _)| b).unwrap_or(name);
-    let mut stem = base.replace(version, "");
-    for noise in ["-unsigned", "_unsigned", ".unsigned", "unsigned"] {
-        stem = stem.replace(noise, "");
-    }
-    let sep = |c: char| c == '-' || c == '_' || c == '.' || c == ' ';
-    let mut stem = stem.trim_matches(sep).to_string();
-    // "App_v" (from "App_v1.0"): the "v" belonged to the version.
-    for tail in ["-v", "_v", ".v", " v", "-V", "_V"] {
-        if let Some(s) = stem.strip_suffix(tail) {
-            stem = s.trim_matches(sep).to_string();
-            break;
-        }
-    }
-    if stem.is_empty() { base.to_string() } else { stem }
+/// The tag as the version the source shows: "ios-v0.2.1" → "0.2.1" (for Swift, installing a single asset).
+#[uniffi::export]
+pub fn github_version(tag: String) -> String {
+    version_from_tag(&tag)
 }
 
-/// The repository as a source, so it can be followed like any other: one app per kind of .ipa.
+/// The repository as a source, so it can be followed like any other: one app, the first .ipa of each release.
+/// File names change over a project's life (VoidGram's were AyuGramm-IOS-buildNN.ipa), so they don't split apps;
+/// releases with several .ipa still list all of them on the repository page.
 #[uniffi::export]
 pub fn github_repo_as_source(info: GithubRepoInfo, include_prereleases: bool) -> Source {
     let RepoRef { owner, repo } = info.repo.clone();
-    let mut apps: Vec<StoreApp> = Vec::new();
-    for r in info.releases.iter().filter(|r| include_prereleases || !r.prerelease) {
-        let version = version_from_tag(&r.tag);
-        for a in &r.ipas {
-            let stem = asset_stem(&a.name, &version);
-            let bundle_id = format!("github.{owner}.{repo}.{stem}").to_lowercase();
-            let v = AppVersion {
-                version: version.clone(),
+    let versions: Vec<AppVersion> = info
+        .releases
+        .iter()
+        .filter(|r| include_prereleases || !r.prerelease)
+        .filter_map(|r| {
+            let a = r.ipas.first()?;
+            Some(AppVersion {
+                version: version_from_tag(&r.tag),
                 build_version: None,
                 date: r.published_at.clone(),
                 notes: r.notes.clone(),
@@ -248,28 +236,30 @@ pub fn github_repo_as_source(info: GithubRepoInfo, include_prereleases: bool) ->
                 min_os_version: None,
                 max_os_version: None,
                 fingerprint: format!("gh:{}|{}", a.id, a.updated_at),
-            };
-            match apps.iter_mut().find(|x| x.bundle_id == bundle_id) {
-                Some(app) => app.versions.push(v),
-                None => apps.push(StoreApp {
-                    bundle_id,
-                    name: stem.clone(),
-                    developer: Some(owner.clone()),
-                    subtitle: Some(format!("{owner}/{repo}")),
-                    description: None,
-                    icon_url: Some(format!("https://github.com/{owner}.png?size=256")),
-                    tint_color: None,
-                    category: None,
-                    screenshots: vec![],
-                    versions: vec![v],
-                    entitlements: vec![],
-                    privacy: vec![],
-                    beta: r.prerelease,
-                    bundle_id_is_placeholder: true,
-                }),
-            }
-        }
-    }
+            })
+        })
+        .collect();
+    let apps = if versions.is_empty() {
+        vec![]
+    } else {
+        vec![StoreApp {
+            bundle_id: format!("github.{owner}.{repo}").to_lowercase(),
+            name: repo.clone(),
+            developer: Some(owner.clone()),
+            subtitle: Some(format!("{owner}/{repo}")),
+            description: None,
+            // The real icon comes out of the .ipa once it is installed: the owner's avatar is not the app's.
+            icon_url: None,
+            tint_color: None,
+            category: None,
+            screenshots: vec![],
+            versions,
+            entitlements: vec![],
+            privacy: vec![],
+            beta: false,
+            bundle_id_is_placeholder: true,
+        }]
+    };
     Source {
         identifier: format!("github:{owner}/{repo}"),
         name: repo.clone(),
@@ -306,13 +296,10 @@ mod tests {
     fn tags_and_stems() {
         assert_eq!(version_from_tag("ios-v0.2.1"), "0.2.1");
         assert_eq!(version_from_tag("nightly"), "nightly");
-        assert_eq!(asset_stem("Horizon-0.2.1.ipa", "0.2.1"), "Horizon");
-        assert_eq!(asset_stem("VoidGram-unsigned.ipa", "1.4"), "VoidGram");
-        assert_eq!(asset_stem("App_v1.0.ipa", "1.0"), "App");
     }
 
     #[test]
-    fn repo_to_source_groups_by_stem() {
+    fn repo_to_source_is_one_app() {
         let asset = |id, name: &str| GithubAsset {
             id,
             name: name.into(),
@@ -320,20 +307,24 @@ mod tests {
             download_url: format!("https://g/{name}"),
             updated_at: "t".into(),
         };
+        let rel = |tag: &str, pre, ipas| GithubRelease { tag: tag.into(), name: tag.into(), notes: None, published_at: None, prerelease: pre, ipas };
         let info = GithubRepoInfo {
-            repo: RepoRef { owner: "o".into(), repo: "r".into() },
+            repo: RepoRef { owner: "o".into(), repo: "VoidGram".into() },
             releases: vec![
-                GithubRelease { tag: "v2".into(), name: "2".into(), notes: None, published_at: None, prerelease: false, ipas: vec![asset(2, "A-2.ipa"), asset(3, "B-2.ipa")] },
-                GithubRelease { tag: "v1".into(), name: "1".into(), notes: None, published_at: None, prerelease: false, ipas: vec![asset(1, "A-1.ipa")] },
-                GithubRelease { tag: "v3-beta".into(), name: "3".into(), notes: None, published_at: None, prerelease: true, ipas: vec![asset(4, "A-3-beta.ipa")] },
+                rel("v27.8.6", false, vec![asset(3, "VoidGram-27.8.6.ipa"), asset(4, "Other.ipa")]),
+                rel("build-73", false, vec![asset(2, "AyuGramm-IOS-build73.ipa")]),
+                rel("build-50", true, vec![asset(1, "AyuGramm-IOS-build50.ipa")]),
             ],
             source_url: None,
             rate_limit_remaining: None,
         };
         let src = github_repo_as_source(info, false);
-        assert_eq!(src.apps.len(), 2);
-        assert_eq!(src.apps[0].versions.len(), 2);
-        assert_eq!(src.apps[0].versions[0].version, "2");
-        assert!(src.apps[0].bundle_id_is_placeholder);
+        assert_eq!(src.apps.len(), 1);
+        let app = &src.apps[0];
+        assert_eq!(app.name, "VoidGram");
+        assert_eq!(app.icon_url, None);
+        assert_eq!(app.versions.len(), 2);
+        assert_eq!(app.versions[0].download_url, "https://g/VoidGram-27.8.6.ipa");
+        assert_eq!(app.versions[1].version, "73");
     }
 }

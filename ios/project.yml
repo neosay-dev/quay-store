@@ -53,6 +53,10 @@ targets:
         UIBackgroundModes:
           - fetch
           - processing
+          # Silent audio keeps the pairing host alive while the user is in Settings.
+          - audio
+        NSBonjourServices:
+          - _remotepairing-pairable-host._tcp
         BGTaskSchedulerPermittedIdentifiers:
           - dev.neosay.quaystore.refresh
         # quay://source?url=… adds a source; altstore:// and sidestore:// links too.

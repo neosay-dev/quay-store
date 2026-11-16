@@ -13,6 +13,7 @@ pub mod github;
 pub mod http;
 pub mod ipa;
 pub mod ota;
+pub mod pairing_host;
 pub mod signing;
 pub mod source;
 pub mod storage;

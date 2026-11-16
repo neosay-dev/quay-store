@@ -268,8 +268,11 @@ struct GithubRepoView: View {
     private func install(release: GithubRelease, asset: GithubAsset) async {
         guard let info else { return }
         let source = githubRepoAsSource(info: info, includePrereleases: true)
-        guard let app = source.apps.first(where: { $0.versions.contains { $0.downloadUrl == asset.downloadUrl } }),
-              let version = app.versions.first(where: { $0.downloadUrl == asset.downloadUrl }) else { return }
+        guard let app = source.apps.first else { return }
+        let version = AppVersion(
+            version: githubVersion(tag: release.tag), buildVersion: nil, date: release.publishedAt, notes: release.notes,
+            downloadUrl: asset.downloadUrl, size: asset.size, sha256: nil, minOsVersion: nil, maxOsVersion: nil,
+            fingerprint: "gh:\(asset.id)|\(asset.updatedAt)")
         await installer.install(CatalogApp(app: app, source: source), version: version)
     }
 }

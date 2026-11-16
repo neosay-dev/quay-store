@@ -80,6 +80,7 @@ struct MyAppsView: View {
             await catalog.refreshAll()
             await installer.syncWithDevice()
         }
+        .task { await installer.syncWithDevice() }
     }
 }
 
@@ -137,6 +138,7 @@ struct InstalledRow: View {
         .swipeActions(edge: .trailing) {
             Button(role: .destructive) { Task { await installer.uninstall(record) } } label: { Label("Удалить", systemImage: "trash") }
             Button { Task { await installer.refresh(record) } } label: { Label("Подпись", systemImage: "signature") }.tint(.accentColor)
+            Button { catalog.removeInstalled(record.installedBundleId) } label: { Label("Забыть", systemImage: "eye.slash") }.tint(.gray)
         }
 
         if let app = catalog.catalogApp(for: record) {

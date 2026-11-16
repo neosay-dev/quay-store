@@ -147,7 +147,7 @@ final class Installer: ObservableObject {
                 buildVersion: v.buildVersion ?? info.buildVersion,
                 sha256: info.sha256,
                 fingerprint: v.fingerprint,
-                iconURL: app.app.iconUrl ?? existing?.iconURL,
+                iconURL: app.app.iconUrl ?? Self.saveIcon(info.iconPng, for: app.app.bundleId) ?? existing?.iconURL,
                 downloadURL: v.downloadUrl,
                 ipaFile: ipa.lastPathComponent,
                 expiresAt: outcome.expiresAt?.date,
@@ -183,7 +183,7 @@ final class Installer: ObservableObject {
                 buildVersion: info.buildVersion,
                 sha256: info.sha256,
                 fingerprint: "sha256:\(info.sha256)",
-                iconURL: nil,
+                iconURL: Self.saveIcon(info.iconPng, for: info.bundleId),
                 downloadURL: nil,
                 ipaFile: dest.lastPathComponent,
                 expiresAt: outcome.expiresAt?.date,
@@ -379,6 +379,15 @@ final class Installer: ObservableObject {
             }
         }
         return file
+    }
+
+    /// The icon from the .ipa as a file URL AsyncImage can load.
+    private static func saveIcon(_ png: Data?, for bundleId: String) -> String? {
+        guard let png else { return nil }
+        let dir = Paths.support.appendingPathComponent("icons", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("\(bundleId).png")
+        return (try? png.write(to: url, options: .atomic)) != nil ? url.absoluteString : nil
     }
 
     private func checkOS(_ minimum: String?) throws {

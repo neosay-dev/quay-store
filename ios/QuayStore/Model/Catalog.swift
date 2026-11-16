@@ -208,6 +208,11 @@ final class Catalog: ObservableObject {
             ?? installed.first { $0.sourceBundleId == app.app.bundleId && !app.app.bundleIdIsPlaceholder }
     }
 
+    /// The source's icon, else the one Quay took out of the installed .ipa (GitHub repos have none).
+    func icon(for app: CatalogApp) -> String? {
+        app.app.iconUrl ?? installedRecord(for: app)?.iconURL
+    }
+
     func catalogApp(for record: InstalledRecord) -> CatalogApp? {
         guard let bid = record.sourceBundleId else { return nil }
         if let url = record.sourceURL, let s = sources[url], let a = s.apps.first(where: { $0.bundleId == bid }), !a.versions.isEmpty {

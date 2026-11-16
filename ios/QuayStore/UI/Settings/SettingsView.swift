@@ -337,6 +337,7 @@ struct DeviceView: View {
     @EnvironmentObject var settings: SettingsModel
     var body: some View {
         Form {
+            PairingHostSection()
             PairingSection()
             DeviceCheckSection()
             Section {

@@ -72,10 +72,11 @@ struct GetButton: View {
 struct AppRow: View {
     let app: CatalogApp
     var showSource = false
+    @EnvironmentObject var catalog: Catalog
 
     var body: some View {
         HStack(spacing: 12) {
-            AppIcon(url: app.app.iconUrl, size: 56)
+            AppIcon(url: catalog.icon(for: app), size: 56)
             VStack(alignment: .leading, spacing: 2) {
                 Text(app.app.name).font(.body.weight(.medium)).lineLimit(1)
                 Text(app.app.subtitle ?? app.app.developer ?? app.app.bundleId)

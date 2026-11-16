@@ -79,9 +79,10 @@ struct EmptySources: View {
 
 struct FeaturedCard: View {
     let app: CatalogApp
+    @EnvironmentObject var catalog: Catalog
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            AppIcon(url: app.app.iconUrl, size: 64)
+            AppIcon(url: catalog.icon(for: app), size: 64)
             VStack(alignment: .leading, spacing: 2) {
                 Text(app.app.name).font(.headline).lineLimit(1)
                 Text(app.app.subtitle ?? app.source.name).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
@@ -181,7 +182,7 @@ struct AppDetailView: View {
         List {
             Section {
                 HStack(alignment: .top, spacing: 16) {
-                    AppIcon(url: app.app.iconUrl, size: 104)
+                    AppIcon(url: catalog.icon(for: app), size: 104)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(app.app.name).font(.title2.weight(.bold)).lineLimit(2)
                         Text(app.app.developer ?? app.source.name).font(.subheadline).foregroundStyle(.secondary)

@@ -18,6 +18,8 @@ pub struct IpaInfo {
     pub size: u64,
     /// The app has app extensions (widgets, share extensions …): each needs its own App ID on a free account.
     pub extension_count: u32,
+    /// The largest icon PNG in the app folder (Apple's CgBI PNG: iOS draws it, other tools may not).
+    pub icon_png: Option<Vec<u8>>,
 }
 
 #[uniffi::export]
@@ -62,6 +64,7 @@ pub fn inspect_ipa(path: String) -> Result<IpaInfo> {
         .or_else(|| get("CFBundleName"))
         .unwrap_or_else(|| bundle_id.clone());
     let build = get("CFBundleVersion");
+    let icon_png = largest_icon(&mut zip, &names, &app_dir, &plist);
     let version = get("CFBundleShortVersionString")
         .or_else(|| build.clone())
         .unwrap_or_else(|| "0".into());
@@ -75,7 +78,42 @@ pub fn inspect_ipa(path: String) -> Result<IpaInfo> {
         sha256,
         size,
         extension_count,
+        icon_png,
     })
+}
+
+/// Icon files named in CFBundleIcons (e.g. "AppIcon60x60" → AppIcon60x60@2x.png), else any AppIcon*/Icon* PNG
+/// in the app's root. Apps whose icon lives only in Assets.car have none.
+fn largest_icon<R: std::io::Read + std::io::Seek>(
+    zip: &mut zip::ZipArchive<R>,
+    names: &[String],
+    app_dir: &str,
+    plist: &plist::Dictionary,
+) -> Option<Vec<u8>> {
+    let mut bases: Vec<String> = plist
+        .get("CFBundleIcons")
+        .and_then(|v| v.as_dictionary())
+        .and_then(|d| d.get("CFBundlePrimaryIcon"))
+        .and_then(|v| v.as_dictionary())
+        .and_then(|d| d.get("CFBundleIconFiles"))
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_string().map(str::to_string)).collect())
+        .unwrap_or_default();
+    bases.extend(["AppIcon".to_string(), "Icon".to_string()]);
+    let root_pngs: Vec<&String> = names
+        .iter()
+        .filter(|n| n.starts_with(app_dir) && !n[app_dir.len()..].contains('/') && n.to_lowercase().ends_with(".png"))
+        .collect();
+    let best = bases.iter().find_map(|base| {
+        root_pngs
+            .iter()
+            .filter(|n| n[app_dir.len()..].starts_with(base.as_str()))
+            .max_by_key(|n| zip.by_name(n.as_str()).map(|f| f.size()).unwrap_or(0))
+            .map(|n| n.to_string())
+    })?;
+    let mut out = Vec::new();
+    zip.by_name(&best).ok()?.read_to_end(&mut out).ok()?;
+    Some(out)
 }
 
 pub fn file_sha256(path: &str) -> Result<String> {
@@ -123,6 +161,10 @@ mod tests {
             z.write_all(&xml).unwrap();
             z.start_file("Payload/App.app/PlugIns/W.appex/Info.plist", opts).unwrap();
             z.write_all(&xml).unwrap();
+            z.start_file("Payload/App.app/AppIcon60x60@2x.png", opts).unwrap();
+            z.write_all(b"small").unwrap();
+            z.start_file("Payload/App.app/AppIcon60x60@3x.png", opts).unwrap();
+            z.write_all(b"bigger icon").unwrap();
             z.finish().unwrap();
         }
         let info = inspect_ipa(path.to_string_lossy().into()).unwrap();
@@ -131,6 +173,7 @@ mod tests {
         assert_eq!(info.version, "1.2");
         assert_eq!(info.build_version.as_deref(), Some("7"));
         assert_eq!(info.extension_count, 1);
+        assert_eq!(info.icon_png.as_deref(), Some(&b"bigger icon"[..]));
         assert_eq!(info.sha256.len(), 64);
         assert!(verify_sha256(path.to_string_lossy().into(), info.sha256.to_uppercase()).unwrap());
         std::fs::remove_dir_all(dir).unwrap();

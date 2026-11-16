@@ -163,6 +163,7 @@ struct OnboardingView: View {
 
     private var pairing: some View {
         Group {
+            PairingHostSection()
             PairingSection()
             if settings.hasPairingFile {
                 DeviceCheckSection(onSuccess: { _ in deviceOK = true })
