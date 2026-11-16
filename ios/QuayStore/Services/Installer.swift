@@ -170,7 +170,8 @@ final class Installer: ObservableObject {
                 expiresAt: outcome.expiresAt?.date,
                 signedWith: self.settings.signingMode,
                 increasedMemory: increased,
-                tweaks: tweakFiles.isEmpty ? nil : tweakFiles
+                tweaks: tweakFiles.isEmpty ? nil : tweakFiles,
+                accountID: self.settings.activeAccountID
             )
             if !self.settings.keepIPAs {
                 try? FileManager.default.removeItem(at: ipa)
@@ -205,7 +206,8 @@ final class Installer: ObservableObject {
                 downloadURL: nil,
                 ipaFile: dest.lastPathComponent,
                 expiresAt: outcome.expiresAt?.date,
-                signedWith: self.settings.signingMode
+                signedWith: self.settings.signingMode,
+                accountID: self.settings.activeAccountID
             )
             self.finish(record, replacing: existing)
         }
@@ -232,6 +234,7 @@ final class Installer: ObservableObject {
         var r = record
         r.expiresAt = outcome.expiresAt?.date
         r.signedWith = settings.signingMode
+        r.accountID = settings.activeAccountID
         r.installedBundleId = outcome.installedBundleId
         r.ipaFile = settings.keepIPAs ? ipa.lastPathComponent : nil
         if !settings.keepIPAs { try? FileManager.default.removeItem(at: ipa) }
@@ -323,7 +326,7 @@ final class Installer: ObservableObject {
             }
             try await ensureSession()
             if account?.isFree ?? true {
-                let others = catalog.activeFreeApps.filter { $0.installedBundleId != replacing }
+                let others = catalog.activeFreeApps(account: settings.activeAccountID).filter { $0.installedBundleId != replacing }
                 if others.count >= 2 && replacing != Bundle.main.bundleIdentifier {
                     let names = others.map(\.name).joined(separator: ", ")
                     throw QuayMessage("Бесплатный Apple ID держит только 3 приложения, и одно из них Quay Store. Удали одно из: \(names)")

@@ -242,8 +242,9 @@ final class Catalog: ObservableObject {
         RecordStore.save(installed, as: "installed.json")
     }
 
-    /// Apps signed with the free Apple ID that still count against the 3-app limit (Quay itself is the third).
-    var activeFreeApps: [InstalledRecord] {
-        installed.filter { $0.signedWith == .appleID && ($0.expiresAt ?? .distantFuture) > Date() }
+    /// Apps this Apple ID signed that still count against its 3-app limit (Quay itself is the third).
+    /// The limit is per account: apps from another Apple ID don't count.
+    func activeFreeApps(account: String?) -> [InstalledRecord] {
+        installed.filter { $0.signedWith == .appleID && $0.accountID == account && ($0.expiresAt ?? .distantFuture) > Date() }
     }
 }

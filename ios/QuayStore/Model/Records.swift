@@ -36,6 +36,8 @@ struct InstalledRecord: Codable, Identifiable, Hashable {
     var installedAt: Date = Date()
     /// Injected .dylib files, relative to Paths.support (injected again on every refresh).
     var tweaks: [String]? = nil
+    /// The account it was signed with (SigningAccount.id); nil for apps installed before accounts existed.
+    var accountID: String? = nil
 
     var id: String { installedBundleId }
 
