@@ -114,7 +114,7 @@ final class Installer: ObservableObject {
     /// The account's signing certificate as .p12 with your password, ready to share.
     func exportCertificate(password: String) async throws -> URL {
         try await ensureSession()
-        let data = try await exportAppleCertificate(password: password)
+        let data = try await exportAppleCertificate(password: password, observer: observer)
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(account?.email ?? "apple-id").p12")
         try data.write(to: url, options: .atomic)
         return url

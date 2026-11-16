@@ -255,6 +255,9 @@ fn report_text(r: &Report) -> String {
         "Anisette-сервер не отвечает. Выбери другой в настройках".into()
     } else if lower.contains("abort") {
         "Вход отменён".into()
+    } else if lower.contains("certificate") && (lower.contains("too many") || lower.contains("maximum") || lower.contains("max ")) {
+        // Checked before the App ID limit: Apple's certificate limit message also says "too many".
+        "У этого Apple ID уже максимум сертификатов (их создали SideStore, iLoader или другие). Разреши Quay отозвать один, когда он спросит".into()
     } else if lower.contains("7460") || lower.contains("too many") || lower.contains("maximum number of app ids") {
         "Лимит бесплатного аккаунта: не больше 10 новых App ID за 7 дней. Подожди или переиспользуй приложения".into()
     } else if lower.contains("3 apps") || lower.contains("maximum number of apps") || lower.contains("0xe8008021") {
@@ -315,7 +318,8 @@ pub async fn apple_id_sign_in(
 
 /// The signed-in account's signing certificate and key as .p12, locked with `password`.
 #[uniffi::export(async_runtime = "tokio")]
-pub async fn export_apple_certificate(password: String) -> Result<Vec<u8>> {
+pub async fn export_apple_certificate(password: String, observer: Box<dyn SigningObserver>) -> Result<Vec<u8>> {
+    set_observer(Arc::from(observer));
     let mut guard = session().lock().await;
     let s = guard.as_mut().ok_or_else(|| QuayError::auth("Сначала войди в Apple ID"))?;
     let (email, team, storage) = (s.info.email.clone(), s.team.clone(), s.storage.clone());
@@ -325,7 +329,8 @@ pub async fn export_apple_certificate(password: String) -> Result<Vec<u8>> {
         s.loader.get_dev_session(),
         &team,
         &storage,
-        &MaxCertsBehavior::<MaxCertsCallbackBox>::Error,
+        // A new Apple ID has no Quay certificate yet: creating one may need a revoke, asked like on install.
+        &MaxCertsBehavior::Prompt(max_certs_callback()),
     )
     .await
     .map_err(|e| QuayError::signing(format!("Сертификат не получен: {}", report_text(&e))))?;
