@@ -5,7 +5,7 @@ struct QuayStoreApp: App {
     @Environment(\.scenePhase) private var phase
 
     init() {
-        quayInit(verbose: false)
+        quayInit(verbose: false, logPath: Log.url.path)
         URLCache.shared = URLCache(memoryCapacity: 64 << 20, diskCapacity: 400 << 20)
         BackgroundWork.register()
     }
@@ -44,6 +44,8 @@ final class Router: ObservableObject {
     @Published var tab: Tab = .today
     /// A source link to confirm (quay://, altstore://, sidestore://).
     @Published var pendingSource: String?
+    /// The log sheet (tapping the install progress opens it).
+    @Published var showLog = false
 
     func open(_ url: URL) {
         if url.isFileURL {

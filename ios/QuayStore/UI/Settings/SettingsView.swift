@@ -4,35 +4,35 @@ import UniformTypeIdentifiers
 struct SettingsView: View {
     @EnvironmentObject var settings: SettingsModel
     @EnvironmentObject var installer: Installer
+    @EnvironmentObject var catalog: Catalog
     @State var cacheSize: String = ""
     @State var token = ""
+    @State var importMessage: String?
 
     var body: some View {
         Form {
             Section {
-                Picker("Способ подписи", selection: $settings.signingMode) {
-                    ForEach(SigningMode.allCases) { Text($0.title).tag($0) }
+                NavigationLink { AccountsView() } label: {
+                    InfoRow(title: "Аккаунты и сертификаты", value: settings.activeAccount?.title ?? "Нет")
                 }
-                switch settings.signingMode {
-                case .appleID:
-                    NavigationLink { AppleIDView() } label: {
-                        InfoRow(title: "Apple ID", value: settings.appleEmail.isEmpty ? "Не выполнен вход" : settings.appleEmail)
-                    }
+                if settings.signingMode == .appleID {
                     NavigationLink { AnisetteServersView() } label: {
                         InfoRow(title: "Anisette-сервер", value: URL(string: settings.anisetteURL)?.host ?? settings.anisetteURL)
                     }
                     Toggle("Отдельные App ID для расширений", isOn: $settings.registerExtensions)
-                case .certificate:
-                    NavigationLink { CertificateView() } label: {
-                        InfoRow(title: "Сертификат", value: settings.hasCertificate ? "Добавлен" : "Не добавлен")
+                } else {
+                    TextField("Сервер манифеста", text: $settings.manifestServer)
+                        .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    if settings.manifestServer != SettingsModel.defaultManifestServer {
+                        Button("Вернуть api.palera.in") { settings.manifestServer = SettingsModel.defaultManifestServer }
                     }
                 }
             } header: {
                 Text("Подпись")
             } footer: {
-                if settings.signingMode == .appleID {
-                    Text("Расширения (виджеты, «Поделиться») с отдельными App ID работают полностью, но быстрее тратят лимит: 10 новых App ID в неделю.")
-                }
+                Text(settings.signingMode == .appleID
+                     ? "Расширения (виджеты, «Поделиться») с отдельными App ID работают полностью, но быстрее тратят лимит: 10 новых App ID в неделю."
+                     : "Сервер манифеста отдаёт iOS https-описание установки. Ему уходят bundle ID, название и версия; сам .ipa остаётся на телефоне. Нужен тот же формат запроса, что у api.palera.in/genPlist.")
             }
 
             Section("Устройство") {
@@ -42,6 +42,25 @@ struct SettingsView: View {
                 Link(destination: URL(string: "https://apps.apple.com/search?term=LocalDevVPN")!) {
                     Label("LocalDevVPN в App Store", systemImage: "network")
                 }
+            }
+
+            Section("Оформление") {
+                Picker("Тема", selection: $settings.appearance) {
+                    Text("Как в системе").tag("system")
+                    Text("Светлая").tag("light")
+                    Text("Тёмная").tag("dark")
+                }
+                HStack(spacing: 12) {
+                    ForEach(SettingsModel.accents, id: \.self) { hex in
+                        Circle()
+                            .fill(Color(hex: hex) ?? Color("AccentColor"))
+                            .frame(width: 28, height: 28)
+                            .overlay(Circle().stroke(Color.primary, lineWidth: settings.accent == hex ? 2 : 0).padding(-3))
+                            .onTapGesture { settings.accent = hex }
+                            .accessibilityLabel(hex.isEmpty ? "Цвет по умолчанию" : hex)
+                    }
+                }
+                .padding(.vertical, 4)
             }
 
             Section {
@@ -73,6 +92,17 @@ struct SettingsView: View {
             }
 
             Section {
+                NavigationLink { LogView() } label: { Label("Логи", systemImage: "doc.text") }
+                if let file = try? settings.exportFile(sources: catalog.records) {
+                    ShareLink(item: file) { Label("Экспорт настроек", systemImage: "square.and.arrow.up") }
+                }
+                Button { Task { await importSettings() } } label: { Label("Импорт настроек", systemImage: "square.and.arrow.down") }
+                if let importMessage { Text(importMessage).font(.footnote).foregroundStyle(.secondary) }
+            } footer: {
+                Text("Экспорт: настройки и список источников. Аккаунты, сертификаты, пароли и pairing file в файл не попадают.")
+            }
+
+            Section {
                 InfoRow(title: "Версия", value: SettingsModel.versionText)
                 Link("Исходный код на GitHub", destination: URL(string: "https://github.com/neosay-dev/quay-store")!)
                 Button("Пройти настройку заново") { settings.onboardingDone = false }
@@ -86,6 +116,20 @@ struct SettingsView: View {
         .onDisappear { settings.githubToken = token }
     }
 
+    private func importSettings() async {
+        guard let url = await FilePicker.pick([.json, .data]).first, let data = try? Data(contentsOf: url) else { return }
+        do {
+            let sources = try settings.importFile(data)
+            var added = 0
+            for s in sources where !catalog.records.contains(where: { $0.url.lowercased() == s.url.lowercased() }) {
+                if (try? await catalog.add(s.url)) != nil { added += 1 }
+            }
+            importMessage = "Настройки применены, источников добавлено: \(added)"
+        } catch {
+            importMessage = errorText(error)
+        }
+    }
+
     static func size(of dir: URL) -> String {
         let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.fileSizeKey])) ?? []
         let total = files.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
@@ -93,39 +137,96 @@ struct SettingsView: View {
     }
 }
 
-// MARK: Apple ID
+// MARK: accounts
 
-struct AppleIDView: View {
+struct AccountsView: View {
     @EnvironmentObject var settings: SettingsModel
     @EnvironmentObject var installer: Installer
+    @State var exportPassword = ""
+    @State var exported: URL?
+    @State var exportError: String?
+    @State var exporting = false
 
     var body: some View {
-        Form {
-            if let a = installer.account {
-                Section {
-                    InfoRow(title: "Apple ID", value: a.email)
-                    InfoRow(title: "Команда", value: a.teamName)
-                    InfoRow(title: "Team ID", value: a.teamId)
-                    InfoRow(title: "Тип", value: a.isFree ? "Бесплатный" : "Платный")
+        List {
+            Section {
+                if settings.accounts.isEmpty {
+                    Text("Пока нет ни Apple ID, ни сертификата").foregroundStyle(.secondary)
                 }
-                Section {
-                    Button("Выйти", role: .destructive) { Task { await installer.signOut() } }
+                ForEach(settings.accounts) { a in
+                    Button {
+                        settings.activate(a)
+                        exported = nil
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: a.kind == .appleID ? "person.crop.circle" : "doc.badge.gearshape")
+                                .font(.title3).foregroundStyle(Color.accentColor).frame(width: 28)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(a.title).foregroundStyle(.primary)
+                                Text([a.kind.title, a.detail].compactMap { $0 }.joined(separator: " · "))
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if a.id == settings.activeAccountID {
+                                Image(systemName: "checkmark").foregroundStyle(Color.accentColor)
+                            }
+                        }
+                    }
+                    .swipeActions {
+                        Button(role: .destructive) {
+                            if a.id == settings.activeAccountID, a.kind == .appleID { Task { await installer.signOut() } }
+                            settings.remove(a)
+                        } label: { Label("Удалить", systemImage: "trash") }
+                    }
                 }
-            } else {
-                AppleIDSignInForm()
+            } footer: {
+                Text("Подпись идёт активным аккаунтом (с галочкой). Нажми на другой, чтобы переключиться.")
+            }
+
+            Section {
+                NavigationLink("Добавить Apple ID") {
+                    Form { AppleIDSignInForm() }.navigationTitle("Apple ID")
+                }
+                NavigationLink("Добавить сертификат") { CertificateView() }
+            }
+
+            if settings.activeAccount?.kind == .appleID {
+                Section {
+                    SecureField("Пароль для .p12", text: $exportPassword)
+                    Button {
+                        Task {
+                            exporting = true
+                            do {
+                                exported = try await installer.exportCertificate(password: exportPassword)
+                                exportError = nil
+                            } catch {
+                                exportError = errorText(error)
+                            }
+                            exporting = false
+                        }
+                    } label: {
+                        HStack { Text("Подготовить .p12"); if exporting { Spacer(); ProgressView() } }
+                    }
+                    .disabled(exporting)
+                    if let exported {
+                        ShareLink(item: exported) { Label("Сохранить или отправить", systemImage: "square.and.arrow.up") }
+                    }
+                    if let exportError { Text(exportError).foregroundStyle(.red).font(.footnote) }
+                } header: {
+                    Text("Экспорт сертификата Apple ID")
+                } footer: {
+                    Text("Сертификат и ключ, которыми Quay подписывает этим Apple ID, в .p12 под твоим паролем. Подойдёт для SideStore, Feather, ESign.")
+                }
             }
         }
-        .navigationTitle("Apple ID")
-        .task {
-            if installer.account == nil, settings.hasAppleID { try? await installer.ensureSession() }
-        }
+        .navigationTitle("Аккаунты")
     }
 }
 
 struct AppleIDSignInForm: View {
     var onDone: (() -> Void)? = nil
-    @EnvironmentObject var settings: SettingsModel
     @EnvironmentObject var installer: Installer
+    @Environment(\.dismiss) var dismiss
     @State var email = ""
     @State var password = ""
     @State var busy = false
@@ -155,7 +256,6 @@ struct AppleIDSignInForm: View {
             .disabled(busy || email.isEmpty || password.isEmpty)
             if let error { Text(error).foregroundStyle(.red).font(.footnote) }
         }
-        .onAppear { if email.isEmpty { email = settings.appleEmail } }
     }
 
     private func signIn() async {
@@ -163,7 +263,7 @@ struct AppleIDSignInForm: View {
         error = nil
         do {
             _ = try await installer.signIn(email: email.trimmingCharacters(in: .whitespaces), password: password)
-            onDone?()
+            if let onDone { onDone() } else { dismiss() }
         } catch {
             self.error = errorText(error)
         }
@@ -243,8 +343,10 @@ struct AnisetteServersView: View {
 
 // MARK: certificate
 
+/// Adds a certificate account: .p12 (+ its password) and .mobileprovision.
 struct CertificateView: View {
     @EnvironmentObject var settings: SettingsModel
+    @Environment(\.dismiss) var dismiss
     @State var p12: Data?
     @State var provision: Data?
     @State var password = ""
@@ -279,25 +381,10 @@ struct CertificateView: View {
             }
             if let error { Section { Text(error).foregroundStyle(.red) } }
             Section {
-                Button("Сохранить") { save() }.disabled(p12 == nil || provision == nil)
-                if settings.hasCertificate {
-                    Button("Удалить сертификат", role: .destructive) {
-                        Keychain.set(nil, for: Keychain.Key.p12)
-                        Keychain.set(nil, for: Keychain.Key.provision)
-                        Keychain.setString(nil, for: Keychain.Key.p12Password)
-                        p12 = nil; provision = nil; summary = nil
-                        settings.objectWillChange.send()
-                    }
-                }
+                Button("Сохранить") { save() }.disabled(summary == nil)
             }
         }
-        .navigationTitle("Свой сертификат")
-        .onAppear {
-            p12 = Keychain.data(for: Keychain.Key.p12)
-            provision = Keychain.data(for: Keychain.Key.provision)
-            password = Keychain.string(for: Keychain.Key.p12Password) ?? ""
-            inspect()
-        }
+        .navigationTitle("Новый сертификат")
         .onChange(of: password) { _ in inspect() }
     }
 
@@ -322,12 +409,12 @@ struct CertificateView: View {
     }
 
     private func save() {
-        guard let p12, let provision else { return }
-        Keychain.set(p12, for: Keychain.Key.p12)
-        Keychain.set(provision, for: Keychain.Key.provision)
-        Keychain.setString(password, for: Keychain.Key.p12Password)
-        settings.signingMode = .certificate
-        settings.objectWillChange.send()
+        guard let p12, let provision, let s = summary else { return }
+        let a = settings.save(SigningAccount(kind: .certificate, title: s.commonName, detail: s.teamName))
+        Keychain.set(p12, for: "\(a.id).p12")
+        Keychain.set(provision, for: "\(a.id).provision")
+        Keychain.setString(password, for: "\(a.id).p12password")
+        dismiss()
     }
 }
 

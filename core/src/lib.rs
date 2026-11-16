@@ -11,6 +11,7 @@ pub mod device;
 pub mod error;
 pub mod github;
 pub mod http;
+pub mod inject;
 pub mod ipa;
 pub mod ota;
 pub mod pairing_host;
@@ -25,22 +26,19 @@ use std::sync::Once;
 
 static INIT: Once = Once::new();
 
-/// Call once at launch, before anything else: TLS (ring) and logging.
+/// Call once at launch, before anything else: TLS (ring) and logging into `log_path` (the log screen reads it).
 #[uniffi::export]
-pub fn quay_init(verbose: bool) {
+pub fn quay_init(verbose: bool, log_path: String) {
     INIT.call_once(|| {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let _ = isideload::init();
-        let level = if verbose {
-            tracing::Level::DEBUG
-        } else {
-            tracing::Level::INFO
+        let level = if verbose { tracing::Level::DEBUG } else { tracing::Level::INFO };
+        let file = std::fs::OpenOptions::new().create(true).append(true).open(&log_path);
+        let builder = tracing_subscriber::fmt().with_max_level(level).with_ansi(false).with_target(false);
+        let _ = match file {
+            Ok(f) => builder.with_writer(std::sync::Mutex::new(f)).try_init(),
+            Err(_) => builder.try_init(),
         };
-        let _ = tracing_subscriber::fmt()
-            .with_max_level(level)
-            .with_ansi(false)
-            .without_time()
-            .try_init();
     });
 }
 

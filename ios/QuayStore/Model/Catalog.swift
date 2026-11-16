@@ -164,16 +164,12 @@ final class Catalog: ObservableObject {
         source.apps.filter { !$0.versions.isEmpty }.map { CatalogApp(app: $0, source: source) }
     }
 
-    /// Featured apps: what sources mark as featured, else every source's first apps.
+    /// Featured apps: only what a source itself marks as featured (nothing is added on its own).
     var featured: [CatalogApp] {
-        var out: [CatalogApp] = []
-        for entry in orderedSources {
-            guard let s = entry.source else { continue }
-            let apps = apps(in: s)
-            let marked = apps.filter { s.featuredBundleIds.contains($0.app.bundleId) }
-            out += marked.isEmpty ? Array(apps.prefix(2)) : marked
+        orderedSources.flatMap { entry -> [CatalogApp] in
+            guard let s = entry.source else { return [] }
+            return apps(in: s).filter { s.featuredBundleIds.contains($0.app.bundleId) }
         }
-        return out
     }
 
     /// Newest versions first, across all sources.

@@ -25,7 +25,12 @@ struct RootView: View {
                 .tabItem { Label("Настройки", systemImage: "gearshape") }
                 .tag(Router.Tab.settings)
         }
-        .overlay(alignment: .bottom) { InstallBanner() }
+        .overlay(alignment: .bottom) {
+            InstallBanner().onTapGesture { router.showLog = true }
+        }
+        .sheet(isPresented: $router.showLog) { NavigationStack { LogView() } }
+        .tint(settings.accentColor)
+        .preferredColorScheme(settings.colorScheme)
         .animation(.easeInOut(duration: 0.25), value: installer.job?.title)
         .sheet(isPresented: twoFactorShown) {
             if let r = installer.twoFactor { TwoFactorSheet(request: r) }

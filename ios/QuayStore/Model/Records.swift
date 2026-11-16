@@ -34,6 +34,8 @@ struct InstalledRecord: Codable, Identifiable, Hashable {
     var signedWith: SigningMode
     var increasedMemory: Bool = false
     var installedAt: Date = Date()
+    /// Injected .dylib files, relative to Paths.support (injected again on every refresh).
+    var tweaks: [String]? = nil
 
     var id: String { installedBundleId }
 

@@ -193,7 +193,20 @@ struct AppDetailView: View {
                 .padding(.vertical, 6)
                 if let r = catalog.installedRecord(for: app) {
                     InstalledStatus(record: r)
+                    if let t = r.tweaks, !t.isEmpty {
+                        Text("Твики: " + t.map { ($0 as NSString).lastPathComponent }.joined(separator: ", "))
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
                 }
+                Button {
+                    Task {
+                        let dylibs = await FilePicker.pick([.data], multiple: true).filter { $0.pathExtension.lowercased() == "dylib" }
+                        if !dylibs.isEmpty { await installer.install(app, tweaks: dylibs) }
+                    }
+                } label: {
+                    Label("Установить с твиками (.dylib)…", systemImage: "puzzlepiece.extension")
+                }
+                .disabled(installer.job != nil)
             }
 
             if !app.app.screenshots.isEmpty {

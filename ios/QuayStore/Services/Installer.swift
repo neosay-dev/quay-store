@@ -61,7 +61,9 @@ final class Installer: ObservableObject {
 
     private func update(stage: InstallStage, fraction: Double) {
         guard var j = job else { return }
-        j.stage = Self.stageText(stage)
+        let text = Self.stageText(stage)
+        if text != j.stage { Log.write("\(j.title): \(text)") }
+        j.stage = text
         j.fraction = fraction
         job = j
     }
@@ -80,38 +82,49 @@ final class Installer: ObservableObject {
 
     // MARK: Apple ID
 
+    /// Signs in and saves the Apple ID as an account (made active). An existing one keeps its state folder.
     func signIn(email: String, password: String) async throws -> AccountInfo {
-        let info = try await signInTryingServers(email: email, password: password)
-        settings.appleEmail = email
-        Keychain.setString(password, for: Keychain.Key.applePassword)
+        var acc = settings.accounts.first { $0.kind == .appleID && $0.title == email } ?? SigningAccount(kind: .appleID, title: email)
+        let info = try await signInTryingServers(email: email, password: password, storageDir: acc.storageDir)
+        acc.detail = info.teamName
+        acc = settings.save(acc)
+        Keychain.setString(password, for: "\(acc.id).password")
         account = info
+        Log.write("Вход в Apple ID: \(email), команда \(info.teamName)")
         return info
     }
 
     func signOut() async {
         await appleIdSignOut()
         account = nil
-        Keychain.setString(nil, for: Keychain.Key.applePassword)
-        settings.appleEmail = ""
     }
 
-    /// Signs in with the saved Apple ID if this launch has no session yet.
+    /// Makes sure the session is the active Apple ID's (switching accounts signs in again).
     func ensureSession() async throws {
-        if let a = await appleIdCurrent() {
+        guard let acc = settings.activeAccount, acc.kind == .appleID, let pw = acc.password else {
+            throw QuayMessage("Добавь Apple ID: Настройки → Аккаунты и сертификаты")
+        }
+        if let a = await appleIdCurrent(), a.email == acc.title {
             account = a
             return
         }
-        guard !settings.appleEmail.isEmpty, let pw = Keychain.string(for: Keychain.Key.applePassword) else {
-            throw QuayMessage("Войди в Apple ID: Настройки → Подпись")
-        }
-        account = try await signInTryingServers(email: settings.appleEmail, password: pw)
+        account = try await signInTryingServers(email: acc.title, password: pw, storageDir: acc.storageDir)
+    }
+
+    /// The account's signing certificate as .p12 with your password, ready to share.
+    func exportCertificate(password: String) async throws -> URL {
+        try await ensureSession()
+        let data = try await exportAppleCertificate(password: password)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(account?.email ?? "apple-id").p12")
+        try data.write(to: url, options: .atomic)
+        return url
     }
 
     /// The chosen anisette server; if it is down, the first one from the public list that answers.
-    private func signInTryingServers(email: String, password: String) async throws -> AccountInfo {
+    private func signInTryingServers(email: String, password: String, storageDir: String) async throws -> AccountInfo {
         do {
             return try await appleIdSignIn(email: email, password: password, anisetteUrl: settings.anisetteURL,
-                                           storageDir: Paths.signingState, observer: observer)
+                                           storageDir: storageDir, observer: observer)
         } catch {
             let text = errorText(error)
             guard text.lowercased().contains("anisette") else { throw error }
@@ -119,8 +132,9 @@ final class Installer: ObservableObject {
             for s in servers where s.address != settings.anisetteURL {
                 guard (try? await checkAnisetteServer(address: s.address)) != nil else { continue }
                 let info = try await appleIdSignIn(email: email, password: password, anisetteUrl: s.address,
-                                                   storageDir: Paths.signingState, observer: observer)
+                                                   storageDir: storageDir, observer: observer)
                 settings.anisetteURL = s.address
+                Log.write("Anisette: переключился на \(s.address)")
                 return info
             }
             throw error
@@ -129,7 +143,8 @@ final class Installer: ObservableObject {
 
     // MARK: install
 
-    func install(_ app: CatalogApp, version: AppVersion? = nil) async {
+    /// `tweaks`: .dylib files to inject; empty keeps the ones the installed copy had.
+    func install(_ app: CatalogApp, version: AppVersion? = nil, tweaks: [URL] = []) async {
         guard let v = version ?? app.latest else { return }
         await run(title: app.app.name, icon: app.app.iconUrl) {
             let existing = self.catalog.installedRecord(for: app)
@@ -137,7 +152,9 @@ final class Installer: ObservableObject {
             let info = try inspectIpa(path: ipa.path)
             try self.checkOS(info.minOsVersion ?? v.minOsVersion)
             let increased = app.app.entitlements.contains("com.apple.developer.kernel.increased-memory-limit")
-            let outcome = try await self.sign(ipaPath: ipa.path, increasedMemory: increased, replacing: existing?.installedBundleId)
+            let tweakFiles = try tweaks.isEmpty ? (existing?.tweaks ?? []) : Self.storeTweaks(tweaks)
+            let toSign = try self.withTweaks(ipa, tweakFiles)
+            let outcome = try await self.sign(ipaPath: toSign.path, increasedMemory: increased, replacing: existing?.installedBundleId)
             var record = InstalledRecord(
                 installedBundleId: outcome.installedBundleId,
                 sourceURL: app.source.sourceUrl,
@@ -152,7 +169,8 @@ final class Installer: ObservableObject {
                 ipaFile: ipa.lastPathComponent,
                 expiresAt: outcome.expiresAt?.date,
                 signedWith: self.settings.signingMode,
-                increasedMemory: increased
+                increasedMemory: increased,
+                tweaks: tweakFiles.isEmpty ? nil : tweakFiles
             )
             if !self.settings.keepIPAs {
                 try? FileManager.default.removeItem(at: ipa)
@@ -209,7 +227,8 @@ final class Installer: ObservableObject {
         } else {
             throw QuayMessage("Файл «\(record.name)» удалён из кэша, а ссылки на него нет. Установи его заново")
         }
-        let outcome = try await sign(ipaPath: ipa.path, increasedMemory: record.increasedMemory, replacing: record.installedBundleId)
+        let toSign = try withTweaks(ipa, record.tweaks ?? [])
+        let outcome = try await sign(ipaPath: toSign.path, increasedMemory: record.increasedMemory, replacing: record.installedBundleId)
         var r = record
         r.expiresAt = outcome.expiresAt?.date
         r.signedWith = settings.signingMode
@@ -315,14 +334,14 @@ final class Installer: ObservableObject {
                 increasedMemoryLimit: increasedMemory, registerExtensions: settings.registerExtensions,
                 observer: observer)
         case .certificate:
-            guard let p12 = Keychain.data(for: Keychain.Key.p12),
-                  let provision = Keychain.data(for: Keychain.Key.provision) else {
-                throw QuayMessage("Добавь сертификат: Настройки → Подпись")
+            guard let acc = settings.activeAccount, acc.kind == .certificate,
+                  let p12 = acc.p12, let provision = acc.provision else {
+                throw QuayMessage("Добавь сертификат: Настройки → Аккаунты и сертификаты")
             }
             job?.stage = "Подпись"
             let signed = FileManager.default.temporaryDirectory.appendingPathComponent("signed-\(UUID().uuidString).ipa")
             let outcome = try await signIpaWithCertificate(
-                ipaPath: ipaPath, p12: p12, password: Keychain.string(for: Keychain.Key.p12Password) ?? "",
+                ipaPath: ipaPath, p12: p12, password: acc.p12Password,
                 mobileprovision: provision, outIpaPath: signed.path)
             try await installOverTheAir(signed, outcome: outcome)
             return outcome
@@ -333,7 +352,9 @@ final class Installer: ObservableObject {
     /// (an https manifest is required; Feather's "semi-local" mode does the same). Sent there: bundle id, name, version.
     private func installOverTheAir(_ ipa: URL, outcome: InstallOutcome) async throws {
         let port = try await serveIpa(path: ipa.path)
-        var manifest = URLComponents(string: "https://api.palera.in/genPlist")!
+        guard var manifest = URLComponents(string: settings.manifestServer) else {
+            throw QuayMessage("Неверный адрес сервера манифеста в настройках")
+        }
         manifest.queryItems = [
             URLQueryItem(name: "bundleid", value: outcome.installedBundleId),
             URLQueryItem(name: "name", value: outcome.appName),
@@ -381,6 +402,27 @@ final class Installer: ObservableObject {
         return file
     }
 
+    /// Copies picked .dylib files where refreshes find them again.
+    private static func storeTweaks(_ urls: [URL]) throws -> [String] {
+        let rel = "tweaks/\(UUID().uuidString)"
+        let dir = Paths.support.appendingPathComponent(rel, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return try urls.map { u in
+            try FileManager.default.copyItem(at: u, to: dir.appendingPathComponent(u.lastPathComponent))
+            return "\(rel)/\(u.lastPathComponent)"
+        }
+    }
+
+    /// The .ipa with the tweaks injected (a temporary copy), or the .ipa itself without tweaks.
+    private func withTweaks(_ ipa: URL, _ tweaks: [String]) throws -> URL {
+        guard !tweaks.isEmpty else { return ipa }
+        job?.stage = "Внедрение твиков"
+        Log.write("Твики: \(tweaks.map { ($0 as NSString).lastPathComponent }.joined(separator: ", "))")
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent("tweaked-\(UUID().uuidString).ipa")
+        try injectDylibs(ipaPath: ipa.path, dylibPaths: tweaks.map { Paths.support.appendingPathComponent($0).path }, outIpaPath: out.path)
+        return out
+    }
+
     /// The icon from the .ipa as a file URL AsyncImage can load.
     private static func saveIcon(_ png: Data?, for bundleId: String) -> String? {
         guard let png else { return nil }
@@ -414,11 +456,14 @@ final class Installer: ObservableObject {
             return
         }
         job = Job(title: title, iconURL: icon, stage: "Подготовка", fraction: 0)
+        Log.write("\(title): начало")
         await runPlain {
             do {
                 try await body()
             } catch is CancellationError {
+                Log.write("\(title): отменено")
             } catch {
+                Log.write("\(title): ошибка: \(errorText(error))")
                 self.alert = errorText(error)
             }
         }

@@ -25,9 +25,6 @@ enum Paths {
     }()
 
     static let github = caches.appendingPathComponent("github", isDirectory: true)
-
-    /// isideload's state (anisette identity, the signing certificate).
-    static var signingState: String { support.appendingPathComponent("signing", isDirectory: true).path }
 }
 
 /// Secrets: Apple ID password, pairing file, certificate, GitHub token.
@@ -66,11 +63,7 @@ enum Keychain {
     static func string(for key: String) -> String? { data(for: key).flatMap { String(data: $0, encoding: .utf8) } }
 
     enum Key {
-        static let applePassword = "apple.password"
         static let pairing = "device.pairing"
-        static let p12 = "cert.p12"
-        static let p12Password = "cert.password"
-        static let provision = "cert.provision"
         static let githubToken = "github.token"
     }
 }

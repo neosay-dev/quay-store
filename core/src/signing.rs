@@ -238,6 +238,7 @@ struct Session {
     info: AccountInfo,
     loader: Loader,
     team: DeveloperTeam,
+    storage: SharedStorage,
 }
 
 fn session() -> &'static Mutex<Option<Session>> {
@@ -272,7 +273,6 @@ pub async fn apple_id_sign_in(
     storage_dir: String,
     observer: Box<dyn SigningObserver>,
 ) -> Result<AccountInfo> {
-    crate::quay_init(false);
     set_observer(Arc::from(observer));
     notify(InstallStage::SigningIn, 0.1);
 
@@ -295,7 +295,7 @@ pub async fn apple_id_sign_in(
         .team_selection(TeamSelection::First)
         .max_certs_behavior(MaxCertsBehavior::Prompt(max_certs_callback()))
         .extensions_behavior(ExtensionsBehaviorSelection::Prompt(extensions_callback()))
-        .storage(Box::new(storage))
+        .storage(Box::new(storage.clone()))
         .machine_name("Quay Store".to_string())
         .delete_app_after_install(true)
         .build();
@@ -308,9 +308,28 @@ pub async fn apple_id_sign_in(
         is_free: team_name.contains("Personal Team"),
         team_name,
     };
-    *session().lock().await = Some(Session { info: info.clone(), loader, team });
+    *session().lock().await = Some(Session { info: info.clone(), loader, team, storage });
     notify(InstallStage::SigningIn, 1.0);
     Ok(info)
+}
+
+/// The signed-in account's signing certificate and key as .p12, locked with `password`.
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn export_apple_certificate(password: String) -> Result<Vec<u8>> {
+    let mut guard = session().lock().await;
+    let s = guard.as_mut().ok_or_else(|| QuayError::auth("Сначала войди в Apple ID"))?;
+    let (email, team, storage) = (s.info.email.clone(), s.team.clone(), s.storage.clone());
+    let identity = CertificateIdentity::retrieve(
+        "Quay Store",
+        &email,
+        s.loader.get_dev_session(),
+        &team,
+        &storage,
+        &MaxCertsBehavior::<MaxCertsCallbackBox>::Error,
+    )
+    .await
+    .map_err(|e| QuayError::signing(format!("Сертификат не получен: {}", report_text(&e))))?;
+    identity.as_p12(&password).await.map_err(|e| QuayError::signing(report_text(&e)))
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -527,7 +546,7 @@ pub async fn sign_ipa_with_certificate(
 }
 
 /// Payload/<Name>.app/… into an .ipa, keeping file modes (the executable bit) and symlinks.
-fn zip_app(app_dir: &Path, out: &Path) -> Result<()> {
+pub(crate) fn zip_app(app_dir: &Path, out: &Path) -> Result<()> {
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
     let name = app_dir.file_name().ok_or_else(|| QuayError::signing("Нет папки приложения"))?.to_string_lossy().to_string();
