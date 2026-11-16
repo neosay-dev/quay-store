@@ -101,10 +101,14 @@ pub fn parse_source(json: String, source_url: String) -> Result<Source> {
         .and_then(Value::as_array)
         .ok_or_else(|| QuayError::source("В источнике нет списка приложений (apps)"))?;
 
+    // Big aggregated sources repeat bundle ids; like AltStore, the first one wins (the UI keys apps by bundle id).
+    let mut seen = std::collections::HashSet::new();
     let mut apps = Vec::new();
     for a in apps_value.iter().filter_map(Value::as_object) {
         if let Some(app) = parse_app(a) {
-            apps.push(app);
+            if seen.insert(app.bundle_id.clone()) {
+                apps.push(app);
+            }
         }
     }
 
@@ -395,6 +399,16 @@ mod tests {
         assert_eq!(app.entitlements, vec!["a", "b"]);
         assert_eq!(app.privacy[0].text, "cam");
         assert_eq!(src.news[0].identifier, "n1");
+    }
+
+    #[test]
+    fn repeated_bundle_ids_keep_the_first() {
+        let json = r#"{"apps":[
+            {"name":"A","bundleIdentifier":"x.a","version":"2","downloadURL":"https://x/a2.ipa"},
+            {"name":"A old","bundleIdentifier":"x.a","version":"1","downloadURL":"https://x/a1.ipa"},
+            {"name":"B","bundleIdentifier":"x.b","version":"1","downloadURL":"https://x/b.ipa"}]}"#;
+        let src = parse_source(json.into(), "https://example.com/a.json".into()).unwrap();
+        assert_eq!(src.apps.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), ["A", "B"]);
     }
 
     #[test]

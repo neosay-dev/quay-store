@@ -174,8 +174,11 @@ final class Catalog: ObservableObject {
 
     /// Newest versions first, across all sources.
     var recentlyUpdated: [CatalogApp] {
+        // Each date parsed once: sources can hold tens of thousands of apps.
         allApps
-            .sorted { (parseSourceDate($0.latest?.date) ?? .distantPast) > (parseSourceDate($1.latest?.date) ?? .distantPast) }
+            .map { ($0, parseSourceDate($0.latest?.date) ?? .distantPast) }
+            .sorted { $0.1 > $1.1 }
+            .map(\.0)
     }
 
     var news: [NewsEntry] {

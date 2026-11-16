@@ -124,10 +124,16 @@ func byteCount(_ n: UInt64?) -> String? {
 /// ISO 8601 dates from sources, with or without fractional seconds, or a bare day.
 func parseSourceDate(_ s: String?) -> Date? {
     guard let s else { return nil }
-    let f = ISO8601DateFormatter()
-    if let d = f.date(from: s) { return d }
-    f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    if let d = f.date(from: s) { return d }
-    f.formatOptions = [.withFullDate]
-    return f.date(from: String(s.prefix(10)))
+    return DateParsers.plain.date(from: s) ?? DateParsers.fractional.date(from: s) ?? DateParsers.day.date(from: String(s.prefix(10)))
+}
+
+/// Formatters are slow to make: one of each for the whole app.
+private enum DateParsers {
+    static let plain = ISO8601DateFormatter()
+    static let fractional: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f
+    }()
+    static let day: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter(); f.formatOptions = [.withFullDate]; return f
+    }()
 }
