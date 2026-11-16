@@ -369,7 +369,7 @@ struct PairingSection: View {
         } header: {
             Text("Pairing file")
         } footer: {
-            Text("Делается на компьютере с iPhone на кабеле. До iOS 26.3 подходит обычный файл из iLoader или jitterbugpair. На iOS 26.4 и новее (и iOS 27) нужен RPPairing: idevice_pair, StikPair или свежий iLoader. Файл переносишь сюда через «Файлы», AirDrop или Telegram.")
+            Text("Нужен для установки при любом способе подписи. В iLoader на компьютере (iPhone на кабеле): список экспорта → pairing file. На iOS 26.4 и новее (и iOS 27) нужен RPPairing. Файл переносишь сюда через «Файлы», AirDrop или Telegram.")
         }
         .fileImporter(isPresented: $importing,
                       allowedContentTypes: [.propertyList, .xml, .data, UTType(filenameExtension: "mobiledevicepairing") ?? .data]) { result in
