@@ -29,7 +29,8 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: QuayStore/Bridge/QuayStore-Bridging-Header.h
         HEADER_SEARCH_PATHS: $(SRCROOT)/Generated
         LIBRARY_SEARCH_PATHS: $(RUST_LIB_DIR)
-        OTHER_LDFLAGS: -lquay_core -lc++ -lresolv
+        # The .a by path: with -lquay_core the linker picks the .dylib next to it, which is not in the app.
+        OTHER_LDFLAGS: $(RUST_LIB_DIR)/libquay_core.a -lc++ -lresolv
         ENABLE_BITCODE: NO
         DEAD_CODE_STRIPPING: YES
         SUPPORTS_MACCATALYST: NO

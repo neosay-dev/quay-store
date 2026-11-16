@@ -118,6 +118,10 @@ jobs:
           cd ios
           rm -rf Payload && mkdir Payload
           cp -R build/Build/Products/Release-iphoneos/QuayStore.app Payload/
+          # The core must be inside the binary: a reference to libquay_core.dylib crashes the app at launch.
+          if otool -L Payload/QuayStore.app/QuayStore | grep -q libquay_core; then
+            echo "::error::QuayStore links libquay_core.dylib instead of the static library"; exit 1
+          fi
           zip -qry ../QuayStore.ipa Payload
           ls -lh ../QuayStore.ipa
 
