@@ -593,7 +593,11 @@ fn sign_with_identity(ipa_path: &str, identity: &CertificateIdentity, mobileprov
         .unwrap_or_default()
         .to_string();
 
-    let mut app = Application::new(PathBuf::from(ipa_path)).map_err(|e| QuayError::ipa(report_text(&e)))?;
+    let app = Application::new(PathBuf::from(ipa_path)).map_err(|e| QuayError::ipa(report_text(&e)))?;
+    let app_dir = app.bundle.bundle_dir.clone();
+    drop_unsignable(&app_dir, app_id_ent.ends_with('*'))?;
+    // Loaded again so the bundle list matches what is left on disk.
+    let mut app = Application::new(app_dir).map_err(|e| QuayError::ipa(report_text(&e)))?;
     let original = app.main_bundle_id().map_err(|e| QuayError::ipa(report_text(&e)))?;
     let new_id = bundle_id_for_profile(&app_id_ent, &team_id, &original);
     if new_id != original {
@@ -637,6 +641,23 @@ fn sign_with_identity(ipa_path: &str, identity: &CertificateIdentity, mobileprov
 
     sign_bundle(&app.bundle.bundle_dir, &settings).map_err(|e| QuayError::signing(format!("Подпись не удалась: {e}")))?;
     Ok(app.bundle.bundle_dir.clone())
+}
+
+/// Removes what the signer leaves with its old signature, which makes iOS say "integrity could not be verified":
+/// Watch apps, App Clips, ExtensionKit extensions; and every extension when the profile covers one exact App ID.
+fn drop_unsignable(app_dir: &Path, wildcard_profile: bool) -> Result<()> {
+    let mut dirs = vec!["Watch", "AppClips", "Extensions", "com.apple.WatchPlaceholder"];
+    if !wildcard_profile {
+        dirs.push("PlugIns");
+    }
+    for d in dirs {
+        let p = app_dir.join(d);
+        if p.exists() {
+            std::fs::remove_dir_all(&p)?;
+            tracing::info!("removed {d}/ before signing");
+        }
+    }
+    Ok(())
 }
 
 // ---------- shared ----------
@@ -740,6 +761,20 @@ mod tests {
         assert_eq!(z.by_name("Payload/A.app/A").unwrap().unix_mode().unwrap() & 0o777, 0o755);
         assert!(z.by_name("Payload/A.app/Frameworks/x.txt").is_ok());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn drops_what_cannot_be_signed() {
+        let app = std::env::temp_dir().join(format!("quay-drop-{}/A.app", std::process::id()));
+        for d in ["Watch/W.app", "AppClips/C.app", "PlugIns/E.appex", "Frameworks/F.framework"] {
+            std::fs::create_dir_all(app.join(d)).unwrap();
+        }
+        drop_unsignable(&app, true).unwrap();
+        assert!(!app.join("Watch").exists() && !app.join("AppClips").exists());
+        assert!(app.join("PlugIns").exists() && app.join("Frameworks/F.framework").exists());
+        drop_unsignable(&app, false).unwrap();
+        assert!(!app.join("PlugIns").exists() && app.join("Frameworks").exists());
+        std::fs::remove_dir_all(app.parent().unwrap()).unwrap();
     }
 
     #[test]

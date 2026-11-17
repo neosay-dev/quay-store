@@ -63,6 +63,7 @@ struct OnboardingView: View {
             }
         }
         .interactiveDismissDisabled()
+        .modifier(CorePrompts(active: true))
     }
 
     private var nextTitle: String {
